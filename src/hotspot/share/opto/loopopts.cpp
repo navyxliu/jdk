@@ -244,7 +244,11 @@ void PhaseIdealLoop::dominated_by( Node *prevdom, Node *iff, bool flip, bool exc
       pop = Op_IfTrue;
   }
   // 'con' is set to true or false to kill the dominated test.
-  Node *con = _igvn.makecon(pop == Op_IfTrue ? TypeInt::ONE : TypeInt::ZERO);
+  Node* con = _igvn.makecon(pop == Op_IfTrue ? TypeInt::ONE : TypeInt::ZERO);
+  if (!has_node(con)) {
+    IdealLoopTree* loop = get_loop(iff);
+    loop->_body.push(con);
+  }
   set_ctrl(con, C->root()); // Constant gets a new use
   // Hack the dominated test
   _igvn.replace_input_of(iff, 1, con);
