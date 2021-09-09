@@ -42,6 +42,7 @@
 #include "runtime/atomic.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/init.hpp"
+#include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/os.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/safefetch.inline.hpp"
@@ -1627,6 +1628,7 @@ void VMError::report_and_die(int id, const char* message, const char* detail_fmt
       out.print_raw   (cmd);
       out.print_raw_cr("\" ...");
 
+      NullableThreadToNativeFromVM ttnfv(JavaThread::current_or_null());
       if (os::fork_and_exec(cmd) < 0) {
         out.print_cr("os::fork_and_exec failed: %s (%s=%d)",
                      os::strerror(errno), os::errno_name(errno), errno);

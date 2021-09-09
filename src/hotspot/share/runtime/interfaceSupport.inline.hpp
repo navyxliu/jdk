@@ -212,6 +212,33 @@ class ThreadToNativeFromVM : public ThreadStateTransition {
   }
 };
 
+class NullableThreadToNativeFromVM : public StackObj {
+ private:
+   JavaThread* _thread;
+
+ public:
+  NullableThreadToNativeFromVM(Thread* t) : _thread(nullptr) {
+    if (t != nullptr && t->is_Java_thread()) {
+      _thread = JavaThread::cast(t);
+      assert(_thread == Thread::current(), "must be current thread");
+    }
+
+    if (_thread != nullptr) {
+      assert(!_thread->owns_locks(), "must release all locks when leaving VM");
+      ThreadStateTransition::transition_from_vm(_thread, _thread_in_native);
+    }
+  }
+
+  ~NullableThreadToNativeFromVM() {
+    if (_thread != nullptr) {
+      ThreadStateTransition::transition_from_native(_thread, _thread_in_vm);
+      assert(!_thread->is_pending_jni_exception_check(), "Pending JNI Exception Check");
+      // We don't need to clear_walkable because it will happen automagically when we return to java
+    }
+  }
+};
+
+
 // Perform a transition to _thread_blocked and take a call-back to be executed before
 // SafepointMechanism::process_if_requested when returning to the VM. This allows us
 // to perform an "undo" action if we might block processing a safepoint/handshake operation
