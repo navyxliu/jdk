@@ -218,9 +218,11 @@ class NullableThreadToNativeFromVM : public StackObj {
 
  public:
   NullableThreadToNativeFromVM(Thread* t) : _thread(nullptr) {
-    if (t != nullptr && t->is_Java_thread()) {
+    if (t != nullptr && t->is_Java_thread() &&
+        !Threads_lock->owned_by_self()) { // VMError::controlled_crash() grabs Threads_lock.
       _thread = JavaThread::cast(t);
       assert(_thread == Thread::current(), "must be current thread");
+      assert(_thread->thread_state() == _thread_in_vm, "must be in VM");
     }
 
     if (_thread != nullptr) {
