@@ -40,6 +40,7 @@
 #include "runtime/thread.inline.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/ostream.hpp"
+#include "utilities/vmError.hpp"
 
 static const char vm_error_filename_fmt[] = "hs_err_pid%p.jfr";
 static const char vm_oom_filename_fmt[] = "hs_oom_pid%p.jfr";
@@ -413,117 +414,11 @@ const char* JfrEmergencyDump::chunk_path(const char* repository_path) {
   return create_emergency_chunk_path(repository_path);
 }
 
-/*
-* We are just about to exit the VM, so we will be very aggressive
-* at this point in order to increase overall success of dumping jfr data.
-*
-* If we end up deadlocking in the attempt of dumping out jfr data,
-* we rely on the WatcherThread task "is_error_reported()",
-* to exit the VM after a hard-coded timeout (disallow WatcherThread to emergency dump).
-* This "safety net" somewhat explains the aggressiveness in this attempt.
-*
-*/
-static bool prepare_for_emergency_dump(Thread* thread) {
-  assert(thread != NULL, "invariant");
-  if (thread->is_Watcher_thread()) {
-    // need WatcherThread as a safeguard against potential deadlocks
-    return false;
-  }
-
-#ifdef ASSERT
-  Mutex* owned_lock = thread->owned_locks();
-  while (owned_lock != NULL) {
-    Mutex* next = owned_lock->next();
-    owned_lock->unlock();
-    owned_lock = next;
-  }
-#endif // ASSERT
-
-  if (Threads_lock->owned_by_self()) {
-    Threads_lock->unlock();
-  }
-
-  if (Module_lock->owned_by_self()) {
-    Module_lock->unlock();
-  }
-
-  if (ClassLoaderDataGraph_lock->owned_by_self()) {
-    ClassLoaderDataGraph_lock->unlock();
-  }
-
-  if (Heap_lock->owned_by_self()) {
-    Heap_lock->unlock();
-  }
-
-  if (VMOperation_lock->owned_by_self()) {
-    VMOperation_lock->unlock();
-  }
-
-  if (Service_lock->owned_by_self()) {
-    Service_lock->unlock();
-  }
-
-  if (UseNotificationThread && Notification_lock->owned_by_self()) {
-    Notification_lock->unlock();
-  }
-
-  if (CodeCache_lock->owned_by_self()) {
-    CodeCache_lock->unlock();
-  }
-
-  if (PeriodicTask_lock->owned_by_self()) {
-    PeriodicTask_lock->unlock();
-  }
-
-  if (JfrMsg_lock->owned_by_self()) {
-    JfrMsg_lock->unlock();
-  }
-
-  if (JfrBuffer_lock->owned_by_self()) {
-    JfrBuffer_lock->unlock();
-  }
-
-  if (JfrStacktrace_lock->owned_by_self()) {
-    JfrStacktrace_lock->unlock();
-  }
-  return true;
-}
-
 static volatile int jfr_shutdown_lock = 0;
 
 static bool guard_reentrancy() {
   return Atomic::cmpxchg(&jfr_shutdown_lock, 0, 1) == 0;
 }
-
-class JavaThreadInVMAndNative : public StackObj {
- private:
-  JavaThread* const _jt;
-  JavaThreadState _original_state;
- public:
-
-  JavaThreadInVMAndNative(Thread* t) : _jt(t->is_Java_thread() ? JavaThread::cast(t) : NULL),
-                                       _original_state(_thread_max_state) {
-    if (_jt != NULL) {
-      _original_state = _jt->thread_state();
-      if (_original_state != _thread_in_vm) {
-        _jt->set_thread_state(_thread_in_vm);
-      }
-    }
-  }
-
-  ~JavaThreadInVMAndNative() {
-    if (_original_state != _thread_max_state) {
-      _jt->set_thread_state(_original_state);
-    }
-  }
-
-  void transition_to_native() {
-    if (_jt != NULL) {
-      assert(_jt->thread_state() == _thread_in_vm, "invariant");
-      _jt->set_thread_state(_thread_in_native);
-    }
-  }
-};
 
 static void post_events(bool exception_handler, Thread* thread) {
   if (exception_handler) {
@@ -544,19 +439,14 @@ void JfrEmergencyDump::on_vm_shutdown(bool exception_handler) {
   if (!guard_reentrancy()) {
     return;
   }
-  Thread* thread = Thread::current_or_null_safe();
-  if (thread == NULL) {
+
+  // if current is JavaThread, transition to _thread_in_native to issue a final flushpoint
+  if (!VMError::transition_into_native()) {
     return;
   }
-  // Ensure a JavaThread is _thread_in_vm when we make this call
-  JavaThreadInVMAndNative jtivm(thread);
-  if (!prepare_for_emergency_dump(thread)) {
-    return;
-  }
-  post_events(exception_handler, thread);
-  // if JavaThread, transition to _thread_in_native to issue a final flushpoint
+
+  post_events(exception_handler, Thread::current());
   NoHandleMark nhm;
-  jtivm.transition_to_native();
   const int messages = MSGBIT(MSG_VM_ERROR);
   JfrRecorderService service;
   service.rotate(messages);

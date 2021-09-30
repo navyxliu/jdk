@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2021, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2017, 2020 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -174,6 +174,8 @@ public:
 
   // Returns true if the current thread reported a fatal error.
   static bool is_error_reported_in_current_thread();
+
+  static bool transition_into_native();
 
   DEBUG_ONLY(static void controlled_crash(int how);)
 
