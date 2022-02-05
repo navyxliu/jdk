@@ -659,7 +659,8 @@ class MacroAssembler: public Assembler {
   void bang_stack_with_offset(int offset) {
     // stack grows down, caller passes positive offset
     assert(offset > 0, "must bang with negative offset");
-    movl(Address(rsp, (-offset)), rax);
+    //movl(Address(rsp, (-offset)), rax);
+    movl(r10, Address(rsp, (-offset)));
   }
 
   // Writes to stack successive pages until offset reached to check for
