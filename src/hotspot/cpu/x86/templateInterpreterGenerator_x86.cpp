@@ -751,9 +751,9 @@ void TemplateInterpreterGenerator::bang_stack_shadow_pages(bool native_call) {
   __ cmpptr(rsp, Address(thread, JavaThread::shadow_zone_growth_watermark()));
   __ jcc(Assembler::above, L_done);
 
-    //for (int p = 1; p <= n_shadow_pages; p++) {
-    __ bang_stack_with_offset(n_shadow_pages*page_size);
-    //}
+    for (int p = 1; p <= n_shadow_pages; p++) {
+      __ bang_stack_with_offset(p*page_size);
+    }
 
     __ cmpptr(rsp, Address(thread, JavaThread::shadow_zone_safe_limit()));
     __ jccb(Assembler::belowEqual, L_done);
