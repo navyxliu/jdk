@@ -1252,13 +1252,20 @@ void MacroAssembler::atomic_incq(AddressLiteral counter_addr, Register scr) {
 // Writes to stack successive pages until offset reached to check for
 // stack overflow + shadow pages.  This clobbers tmp.
 void MacroAssembler::bang_stack_size(Register size, Register tmp) {
+#ifdef AMD64
+  Register rscratch = tmp != rscratch1 ? rscratch1 : rscratch2;
+#endif
   movptr(tmp, rsp);
   // Bang stack for total size given plus shadow page size.
   // Bang one page at a time because large size can bang beyond yellow and
   // red zones.
   Label loop;
   bind(loop);
+#ifdef AMD64
+  movl(rscratch1, Address(tmp, (-os::vm_page_size())));
+#else
   movl(Address(tmp, (-os::vm_page_size())), size );
+#endif
   subptr(tmp, os::vm_page_size());
   subl(size, os::vm_page_size());
   jcc(Assembler::greater, loop);
@@ -1272,7 +1279,11 @@ void MacroAssembler::bang_stack_size(Register size, Register tmp) {
   for (int i = 1; i < ((int)StackOverflow::stack_shadow_zone_size() / os::vm_page_size()); i++) {
     // this could be any sized move but this is can be a debugging crumb
     // so the bigger the better.
+#ifdef AMD64
+    movl(rscratch1, Address(tmp, (-i * os::vm_page_size())));
+#else
     movptr(Address(tmp, (-i*os::vm_page_size())), size );
+#endif
   }
 }
 
