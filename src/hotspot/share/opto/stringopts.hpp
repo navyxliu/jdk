@@ -113,6 +113,13 @@ class PhaseStringOpts : public Phase {
 
  public:
   PhaseStringOpts(PhaseGVN* gvn, Unique_Node_List* worklist);
+
+#ifndef PRODUCT
+  static void print_statistics();
+ private:
+  static uint _stropts_fused;
+  static uint _stropts_encounted;
+#endif
 };
 
 #endif // SHARE_OPTO_STRINGOPTS_HPP

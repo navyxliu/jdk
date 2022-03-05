@@ -36,6 +36,7 @@
 #include "opto/runtime.hpp"
 #include "opto/stringopts.hpp"
 #include "opto/subnode.hpp"
+#include "runtime/atomic.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 
@@ -413,12 +414,13 @@ Node_List PhaseStringOpts::collect_toString_calls() {
       worklist.push(n);
     }
   }
-
+  uint encounted = 0;
   while (worklist.size() > 0) {
     Node* ctrl = worklist.pop();
     if (StringConcat::is_SB_toString(ctrl)) {
       CallStaticJavaNode* csj = ctrl->as_CallStaticJava();
       string_calls.push(csj);
+      encounted++;
     }
     if (ctrl->in(0) != NULL && !_visited.test_set(ctrl->in(0)->_idx)) {
       worklist.push(ctrl->in(0));
@@ -431,6 +433,9 @@ Node_List PhaseStringOpts::collect_toString_calls() {
       }
     }
   }
+#ifndef PRODUCT
+  Atomic::add(&_stropts_encounted, encounted);
+#endif
   return string_calls;
 }
 
@@ -2060,4 +2065,16 @@ void PhaseStringOpts::replace_string_concat(StringConcat* sc) {
   // Unhook any hook nodes
   string_sizes->disconnect_inputs(C);
   sc->cleanup();
+#ifndef PRODUCT
+  Atomic::inc(&_stropts_fused);
+#endif
 }
+
+#ifndef PRODUCT
+uint PhaseStringOpts::_stropts_fused = 0;
+uint PhaseStringOpts::_stropts_encounted = 0;
+
+void PhaseStringOpts::print_statistics() {
+  tty->print_cr("StringConcat: %4d/%4d(done/encountered)", _stropts_fused, _stropts_encounted);
+}
+#endif
