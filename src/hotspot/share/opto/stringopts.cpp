@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2009, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -60,6 +60,9 @@ class StringConcat : public ResourceObj {
   Node_List           _uncommon_traps; // Uncommon traps that needs to be rewritten
                                        // to restart at the initial JVMState.
 
+  ciSymbol*           _string_sig;
+  ciSymbol*           _char_sig;
+  ciSymbol*           _int_sig;
  public:
   // Mode for converting arguments to Strings
   enum {
@@ -78,6 +81,44 @@ class StringConcat : public ResourceObj {
     _multiple(false) {
     _arguments = new Node(1);
     _arguments->del_req(0);
+
+    Compile *C = stringopts->C;
+    ciMethod *m = end->method();
+    if (m->holder() == C->env()->StringBuilder_klass()) {
+      _string_sig = ciSymbols::String_StringBuilder_signature();
+      _int_sig = ciSymbols::int_StringBuilder_signature();
+      _char_sig = ciSymbols::char_StringBuilder_signature();
+    } else if (m->holder() == C->env()->StringBuffer_klass()) {
+      _string_sig = ciSymbols::String_StringBuffer_signature();
+      _int_sig = ciSymbols::int_StringBuffer_signature();
+      _char_sig = ciSymbols::char_StringBuffer_signature();
+    } else {
+      _end = NULL;
+    }
+  }
+
+  void initialize() {
+    if (_end != NULL) {
+      CallStaticJavaNode *cnode = _end;
+      while (cnode) {
+        Node *recv = cnode->in(TypeFunc::Parms)->uncast();
+        if (recv->is_Proj()) {
+          recv = recv->in(0);
+        }
+
+        cnode = NULL;
+        if (recv->is_Allocate()) {
+          _begin = recv->as_Allocate();
+          add_control(_end);
+          add_control(_begin);
+        } else if (recv->is_CallStaticJava()) {
+          cnode = recv->as_CallStaticJava();
+          if (!match_append_method(cnode, true)) {
+            cnode = NULL;
+          }
+        }
+      }
+    }
   }
 
   bool validate_mem_flow();
@@ -106,6 +147,75 @@ class StringConcat : public ResourceObj {
 #endif
   }
 
+  bool match_append_method(CallStaticJavaNode *use, bool chained) const {
+    assert(use != NULL && use->method() != NULL, "invalid CallStaticJavaNode");
+    assert(_end != NULL, "uninitialized stringconcat");
+    ciMethod *m = use->method();
+    return !m->is_static() &&
+            m->holder() == _end->method()->holder() &&
+            m->name() == ciSymbols::append_name() &&
+            (chained || _begin->result_cast() == use->in(TypeFunc::Parms)) &&
+            (m->signature()->as_symbol() == _string_sig ||
+             m->signature()->as_symbol() == _char_sig ||
+             m->signature()->as_symbol() == _int_sig);
+  }
+
+  bool match_init_method(CallStaticJavaNode *use) const {
+    assert(_end != NULL, "uninitialized stringconcat");
+    ciMethod *m = use->method();
+
+    return !m->is_static() &&
+            m->holder() == _end->method()->holder() &&
+            m->name() == ciSymbols::object_initializer_name() &&
+            _begin->result_cast() == use->in(TypeFunc::Parms);
+  }
+
+  bool process_append_method(CallStaticJavaNode *cnode) {
+      Node* arg = cnode->in(TypeFunc::Parms + 1);
+      if (arg == NULL || arg->is_top()) {
+#ifndef PRODUCT
+        if (PrintOptimizeStringConcat) {
+          tty->print("giving up because the call is effectively dead");
+          cnode->jvms()->dump_spec(tty); tty->cr();
+        }
+#endif
+        return false;
+      }
+
+      // dedup
+      if (_control.contains(cnode)) {
+        return true;
+      }
+
+      add_control(cnode);
+      if (cnode->method()->signature()->as_symbol() == _int_sig) {
+        push_int(arg);
+      } else if (cnode->method()->signature()->as_symbol() == _char_sig) {
+        push_char(arg);
+      } else {
+        if (arg->is_Proj() && arg->in(0)->is_CallStaticJava()) {
+          CallStaticJavaNode* csj = arg->in(0)->as_CallStaticJava();
+          if (csj->method() != NULL &&
+              csj->method()->intrinsic_id() == vmIntrinsics::_Integer_toString &&
+              arg->outcnt() == 1) {
+            // _control is the list of StringBuilder calls nodes which
+            // will be replaced by new String code after this optimization.
+            // Integer::toString() call is not part of StringBuilder calls
+            // chain. It could be eliminated only if its result is used
+            // only by this SB calls chain.
+            // Another limitation: it should be used only once because
+            // it is unknown that it is used only by this SB calls chain
+            // until all related SB calls nodes are collected.
+            assert(arg->unique_out() == cnode, "sanity");
+            add_control(csj);
+            push_int(csj->in(TypeFunc::Parms));
+            return true;
+          }
+        }
+        push_string(arg);
+      }
+      return true;
+  }
   StringConcat* merge(StringConcat* other, Node* arg);
 
   void set_allocation(AllocateNode* alloc) {
@@ -441,193 +551,81 @@ Node_List PhaseStringOpts::collect_toString_calls() {
 
 
 StringConcat* PhaseStringOpts::build_candidate(CallStaticJavaNode* call) {
-  ciMethod* m = call->method();
-  ciSymbol* string_sig;
-  ciSymbol* int_sig;
-  ciSymbol* char_sig;
-  if (m->holder() == C->env()->StringBuilder_klass()) {
-    string_sig = ciSymbols::String_StringBuilder_signature();
-    int_sig = ciSymbols::int_StringBuilder_signature();
-    char_sig = ciSymbols::char_StringBuilder_signature();
-  } else if (m->holder() == C->env()->StringBuffer_klass()) {
-    string_sig = ciSymbols::String_StringBuffer_signature();
-    int_sig = ciSymbols::int_StringBuffer_signature();
-    char_sig = ciSymbols::char_StringBuffer_signature();
-  } else {
+  StringConcat* sc = new StringConcat(this, call);
+  sc->initialize();
+  if (sc->end() == NULL || sc->begin() == NULL) {
     return NULL;
   }
+
 #ifndef PRODUCT
   if (PrintOptimizeStringConcat) {
     tty->print("considering toString call in ");
     call->jvms()->dump_spec(tty); tty->cr();
   }
 #endif
-
-  StringConcat* sc = new StringConcat(this, call);
-
-  AllocateNode* alloc = NULL;
-  InitializeNode* init = NULL;
-
-  // possible opportunity for StringBuilder fusion
-  CallStaticJavaNode* cnode = call;
-  while (cnode) {
-    Node* recv = cnode->in(TypeFunc::Parms)->uncast();
-    if (recv->is_Proj()) {
-      recv = recv->in(0);
-    }
-    cnode = recv->isa_CallStaticJava();
-    if (cnode == NULL) {
-      alloc = recv->isa_Allocate();
-      if (alloc == NULL) {
-        break;
-      }
-      // Find the constructor call
-      Node* result = alloc->result_cast();
-      if (result == NULL || !result->is_CheckCastPP() || alloc->in(TypeFunc::Memory)->is_top()) {
-        // strange looking allocation
-#ifndef PRODUCT
-        if (PrintOptimizeStringConcat) {
-          tty->print("giving up because allocation looks strange ");
-          alloc->jvms()->dump_spec(tty); tty->cr();
-        }
-#endif
-        break;
-      }
-      Node* constructor = NULL;
-      for (SimpleDUIterator i(result); i.has_next(); i.next()) {
-        CallStaticJavaNode *use = i.get()->isa_CallStaticJava();
-        if (use != NULL &&
-            use->method() != NULL &&
-            !use->method()->is_static() &&
-            use->method()->name() == ciSymbols::object_initializer_name() &&
-            use->method()->holder() == m->holder()) {
-          // Matched the constructor.
-          ciSymbol* sig = use->method()->signature()->as_symbol();
-          if (sig == ciSymbols::void_method_signature() ||
-              sig == ciSymbols::int_void_signature() ||
-              sig == ciSymbols::string_void_signature()) {
-            if (sig == ciSymbols::string_void_signature()) {
-              // StringBuilder(String) so pick this up as the first argument
-              assert(use->in(TypeFunc::Parms + 1) != NULL, "what?");
-              const Type* type = _gvn->type(use->in(TypeFunc::Parms + 1));
-              if (type == TypePtr::NULL_PTR) {
-                // StringBuilder(null) throws exception.
-#ifndef PRODUCT
-                if (PrintOptimizeStringConcat) {
-                  tty->print("giving up because StringBuilder(null) throws exception");
-                  alloc->jvms()->dump_spec(tty);
-                  tty->cr();
-                }
-#endif
-                return NULL;
-              }
-              // StringBuilder(str) argument needs null check.
-              sc->push_string_null_check(use->in(TypeFunc::Parms + 1));
-            } else if (sig == ciSymbols::int_void_signature()) {
-              // StringBuilder(int) case.
-              Node* parm = use->in(TypeFunc::Parms + 1);
-              assert(parm != NULL, "must exist");
-              const TypeInt* type = _gvn->type(parm)->is_int();
-              if (type->_hi < 0) {
-                // Initial capacity argument is always negative in which case StringBuilder(int) throws
-                // a NegativeArraySizeException. Bail out from string opts.
-#ifndef PRODUCT
-                if (PrintOptimizeStringConcat) {
-                  tty->print("giving up because a negative argument is passed to StringBuilder(int) which "
-                             "throws a NegativeArraySizeException");
-                  alloc->jvms()->dump_spec(tty);
-                  tty->cr();
-                }
-#endif
-                return NULL;
-              } else if (type->_lo < 0) {
-                // Argument could be negative: We need a runtime check to throw NegativeArraySizeException in that case.
-                sc->push_negative_int_check(parm);
-              }
-            }
-            // The int variant takes an initial size for the backing
-            // array so just treat it like the void version.
-            constructor = use;
-          } else {
-#ifndef PRODUCT
-            if (PrintOptimizeStringConcat) {
-              tty->print("unexpected constructor signature: %s", sig->as_utf8());
-            }
-#endif
-          }
-          break;
-        }
-      }
-      if (constructor == NULL) {
-        // couldn't find constructor
-#ifndef PRODUCT
-        if (PrintOptimizeStringConcat) {
-          tty->print("giving up because couldn't find constructor ");
-          alloc->jvms()->dump_spec(tty); tty->cr();
-        }
-#endif
-        break;
-      }
-
-      // Walked all the way back and found the constructor call so see
-      // if this call converted into a direct string concatenation.
-      sc->add_control(call);
-      sc->add_control(constructor);
-      sc->add_control(alloc);
-      sc->set_allocation(alloc);
-      sc->add_constructor(constructor);
-      if (sc->validate_control_flow() && sc->validate_mem_flow()) {
-        return sc;
-      } else {
+  CallStaticJavaNode *cnode = call;
+  bool chained = false;
+  bool found = false;
+  while (!found && cnode && cnode->method()) {
+    if (sc->match_append_method(cnode, chained)) {
+      if (!sc->process_append_method(cnode)) {
         return NULL;
       }
-    } else if (cnode->method() == NULL) {
-      break;
-    } else if (!cnode->method()->is_static() &&
-               cnode->method()->holder() == m->holder() &&
-               cnode->method()->name() == ciSymbols::append_name() &&
-               (cnode->method()->signature()->as_symbol() == string_sig ||
-                cnode->method()->signature()->as_symbol() == char_sig ||
-                cnode->method()->signature()->as_symbol() == int_sig)) {
-      sc->add_control(cnode);
-      Node* arg = cnode->in(TypeFunc::Parms + 1);
-      if (arg == NULL || arg->is_top()) {
+    } else if (sc->match_init_method(cnode)) {
+      ciSymbol *sig = cnode->method()->signature()->as_symbol();
+
+      // Matched the constructor.
+      if (sig == ciSymbols::string_void_signature()) {
+          // StringBuilder(String) so pick this up as the first argument
+          assert(cnode->in(TypeFunc::Parms + 1) != NULL, "what?");
+          const Type* type = _gvn->type(cnode->in(TypeFunc::Parms + 1));
+          if (type == TypePtr::NULL_PTR) {
+            // StringBuilder(null) throws exception.
 #ifndef PRODUCT
-        if (PrintOptimizeStringConcat) {
-          tty->print("giving up because the call is effectively dead");
-          cnode->jvms()->dump_spec(tty); tty->cr();
-        }
+            if (PrintOptimizeStringConcat) {
+              tty->print_cr("giving up because StringBuilder(null) throws exception");
+              //alloc->jvms()->dump_spec(tty);
+              //tty->cr();
+            }
 #endif
-        break;
-      }
-      if (cnode->method()->signature()->as_symbol() == int_sig) {
-        sc->push_int(arg);
-      } else if (cnode->method()->signature()->as_symbol() == char_sig) {
-        sc->push_char(arg);
-      } else {
-        if (arg->is_Proj() && arg->in(0)->is_CallStaticJava()) {
-          CallStaticJavaNode* csj = arg->in(0)->as_CallStaticJava();
-          if (csj->method() != NULL &&
-              csj->method()->intrinsic_id() == vmIntrinsics::_Integer_toString &&
-              arg->outcnt() == 1) {
-            // _control is the list of StringBuilder calls nodes which
-            // will be replaced by new String code after this optimization.
-            // Integer::toString() call is not part of StringBuilder calls
-            // chain. It could be eliminated only if its result is used
-            // only by this SB calls chain.
-            // Another limitation: it should be used only once because
-            // it is unknown that it is used only by this SB calls chain
-            // until all related SB calls nodes are collected.
-            assert(arg->unique_out() == cnode, "sanity");
-            sc->add_control(csj);
-            sc->push_int(csj->in(TypeFunc::Parms));
-            continue;
+            return NULL;
           }
-        }
-        sc->push_string(arg);
+          // StringBuilder(str) argument needs null check.
+          sc->push_string_null_check(cnode->in(TypeFunc::Parms + 1));
+      } else if (sig == ciSymbols::int_void_signature()) {
+          // StringBuilder(int) case.
+          Node* parm = cnode->in(TypeFunc::Parms + 1);
+          assert(parm != NULL, "must exist");
+          const TypeInt* type = _gvn->type(parm)->is_int();
+          if (type->_hi < 0) {
+            // Initial capacity argument is always negative in which case StringBuilder(int) throws
+            // a NegativeArraySizeException. Bail out from string opts.
+#ifndef PRODUCT
+            if (PrintOptimizeStringConcat) {
+              tty->print_cr("giving up because a negative argument is passed to StringBuilder(int) which "
+                          "throws a NegativeArraySizeException");
+              //alloc->jvms()->dump_spec(tty);
+              //tty->cr();
+            }
+#endif
+            return NULL;
+          } else if (type->_lo < 0) {
+            // Argument could be negative: We need a runtime check to throw NegativeArraySizeException in that case.
+            sc->push_negative_int_check(parm);
+          }
+      } else if (sig != ciSymbols::void_method_signature()) {
+#ifndef PRODUCT
+          if (PrintOptimizeStringConcat) {
+            tty->print("unexpected constructor signature: %s", sig->as_utf8());
+          }
+#endif
+          return NULL;
       }
-      continue;
-    } else {
+      sc->add_control(cnode);
+      sc->add_constructor(cnode);
+      found = true;
+      break;
+    } else if (cnode != sc->end()) {
       // some unhandled signature
 #ifndef PRODUCT
       if (PrintOptimizeStringConcat) {
@@ -636,10 +634,33 @@ StringConcat* PhaseStringOpts::build_candidate(CallStaticJavaNode* call) {
         cnode->in(TypeFunc::Parms + 1)->dump();
       }
 #endif
-      break;
+      return NULL;
+    }
+
+    Node* recv = cnode->in(TypeFunc::Parms)->uncast();
+    if (recv->is_Proj()) {
+      recv = recv->in(0);
+    }
+    // receiver is the original sb object, check its control-dependent node
+    if (recv == sc->begin()) {
+      recv = cnode->in(0);
+      cnode = NULL;
+      if (recv->is_CatchProj()) {
+        // CallStaticJava->Proj#0->Catch->CatchProj->cnode
+        cnode = recv->in(0)->in(0)->in(0)->isa_CallStaticJava();
+      }
+      chained = false;
+    } else { // recv is yet another CallStaticJava
+      cnode = recv->isa_CallStaticJava();
+      chained = true;
     }
   }
-  return NULL;
+
+  if (found && sc->validate_control_flow() && sc->validate_mem_flow()) {
+    return sc;
+  } else {
+    return NULL;
+  }
 }
 
 
