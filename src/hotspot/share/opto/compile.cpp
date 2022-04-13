@@ -2245,6 +2245,13 @@ void Compile::Optimize() {
       // Verify that last round of loop opts produced a valid graph
       PhaseIdealLoop::verify(igvn);
     }
+
+    // do escape analysis after Loop optimizations
+    // because split-if may simplify graph.
+    if (do_escape_analysis() && ConnectionGraph::has_candidates(this)) {
+      ConnectionGraph::do_analysis(this, &igvn);
+      igvn.optimize();
+    }
   }
   if (failing())  return;
 

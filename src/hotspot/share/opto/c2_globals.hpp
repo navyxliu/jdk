@@ -398,6 +398,9 @@
           "Attempt to compile while subsuming loads into machine "          \
           "instructions.")                                                  \
                                                                             \
+  develop(bool, SplitBase4SR, true,                                         \
+          "Attempt to compile while subsuming loads into machine "          \
+          "instructions.")                                                  \
   develop(bool, StressRecompilation, false,                                 \
           "Recompile each compiled method without subsuming loads "         \
           "or escape analysis.")                                            \

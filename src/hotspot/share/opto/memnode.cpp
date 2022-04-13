@@ -1514,10 +1514,17 @@ Node *LoadNode::split_through_phi(PhaseGVN *phase) {
   Compile* C = phase->C;
   intptr_t ignore = 0;
   Node*    base = AddPNode::Ideal_base_and_offset(address, phase, ignore);
+  bool base_match = false;
+
+  if (SplitBase4SR && base != NULL && base->is_CastPP()) {
+    base = base->in(1);
+    base_match = true;
+  }
+
   bool base_is_phi = (base != NULL) && base->is_Phi();
   bool load_boxed_values = t_oop->is_ptr_to_boxed_value() && C->aggressive_unboxing() &&
-                           (base != NULL) && (base == address->in(AddPNode::Base)) &&
-                           phase->type(base)->higher_equal(TypePtr::NOTNULL);
+                           (base_match || ((base != NULL && base == address->in(AddPNode::Base)) &&
+                           phase->type(base)->higher_equal(TypePtr::NOTNULL)));
 
   if (!((mem->is_Phi() || base_is_phi) &&
         (load_boxed_values || t_oop->is_known_instance_field()))) {
