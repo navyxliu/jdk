@@ -2560,7 +2560,9 @@ Node *PhiNode::Ideal(PhaseGVN *phase, bool can_reshape) {
               if (base != NULL && base->is_Phi() && base->in(0) == r && offset != Type::OffsetBot && !worklist.member(n)) {
                 if (Verbose) {
                   tty->print("find a split nexus: {mphi=%d, phi=%d}, splitting node:", _idx, base->_idx);
+#ifndef PRODUCT
                   n->dump("\n", false, tty);
+#endif
                 }
                 worklist.push(n);
               }
