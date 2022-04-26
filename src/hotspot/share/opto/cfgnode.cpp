@@ -1896,6 +1896,184 @@ bool PhiNode::wait_for_region_igvn(PhaseGVN* phase) {
   return delay;
 }
 
+bool stable_phi(PhiNode* phi, PhaseGVN *phase);
+//------------------------------split_through_phi------------------------------
+// Split instance load through Phi.
+static Node *split_through_phi(MemNode* node, /*PhiNode *phi, PhiNode *mphi, */PhaseGVN *phase) {
+  Node* mem     = node->in(MemNode::Memory);
+  Node* address = node->in(MemNode::Address);
+  const TypeOopPtr *t_oop = phase->type(address)->isa_oopptr();
+
+  Compile* C = phase->C;
+  intptr_t ignore = 0;
+  Node*    base = AddPNode::Ideal_base_and_offset(address, phase, ignore);
+  bool base_is_phi = (base != NULL) && base->is_Phi();
+
+  if (mem->is_Phi()) {
+    if (!stable_phi(mem->as_Phi(), phase)) {
+      return NULL; // Wait stable graph
+    }
+    uint cnt = mem->req();
+    // Check for loop invariant memory.
+    if (cnt == 3) {
+      for (uint i = 1; i < cnt; i++) {
+        Node* in = mem->in(i);
+        Node*  m = MemNode::optimize_memory_chain(in, t_oop, node, phase);
+        if (m == mem) {
+          if (i == 1) {
+            // if the first edge was a loop, check second edge too.
+            // If both are replaceable - we are in an infinite loop
+            Node *n = MemNode::optimize_memory_chain(mem->in(2), t_oop, node, phase);
+            if (n == mem) {
+              break;
+            }
+          }
+          node->set_req(MemNode::Memory, mem->in(cnt - i));
+          return node; // made change
+        }
+      }
+    }
+  }
+  if (base_is_phi) {
+    if (!stable_phi(base->as_Phi(), phase)) {
+      return NULL; // Wait stable graph
+    }
+    uint cnt = base->req();
+    // Check for loop invariant memory.
+    if (cnt == 3) {
+      for (uint i = 1; i < cnt; i++) {
+        if (base->in(i) == base) {
+          return NULL; // Wait stable graph
+        }
+      }
+    }
+  }
+
+  // Split through Phi (see original code in loopopts.cpp).
+  assert(C->have_alias_type(t_oop), "instance should have alias type");
+
+  // Do nothing here if Identity will find a value
+  // (to avoid infinite chain of value phis generation).
+  if (node != node->Identity(phase)) {
+    return NULL;
+  }
+
+  // Select Region to split through.
+  Node* region;
+  if (!base_is_phi) {
+    assert(mem->is_Phi(), "sanity");
+    region = mem->in(0);
+    // Skip if the region dominates some control edge of the address.
+    if (!MemNode::all_controls_dominate(address, region))
+      return NULL;
+  } else if (!mem->is_Phi()) {
+    assert(base_is_phi, "sanity");
+    region = base->in(0);
+    // Skip if the region dominates some control edge of the memory.
+    if (!MemNode::all_controls_dominate(mem, region))
+      return NULL;
+  } else if (base->in(0) != mem->in(0)) {
+    assert(base_is_phi && mem->is_Phi(), "sanity");
+    if (MemNode::all_controls_dominate(mem, base->in(0))) {
+      region = base->in(0);
+    } else if (MemNode::all_controls_dominate(address, mem->in(0))) {
+      region = mem->in(0);
+    } else {
+      return NULL; // complex graph
+    }
+  } else {
+    assert(base->in(0) == mem->in(0), "sanity");
+    region = mem->in(0);
+  }
+
+  const Type* this_type = node->bottom_type();
+  int this_index  = C->get_alias_index(t_oop);
+  int this_offset = t_oop->offset();
+  // Use _idx of address base for boxed values.
+  int this_iid    = base->is_Allocate() ? base->_idx : t_oop->instance_id();
+
+  PhaseIterGVN* igvn = phase->is_IterGVN();
+  Node* phi = new PhiNode(region, this_type/*t*/, NULL/*at*/, mem->_idx, this_iid, this_index, this_offset);
+  for (uint i = 1; i < region->req(); i++) {
+    Node* x;
+    Node* the_clone = NULL;
+    Node* in = region->in(i);
+    if (region->is_CountedLoop() && region->as_Loop()->is_strip_mined() && i == LoopNode::EntryControl &&
+        in != NULL && in->is_OuterStripMinedLoop()) {
+      // No node should go in the outer strip mined loop
+      in = in->in(LoopNode::EntryControl);
+    }
+    if (in == NULL || in == C->top()) {
+      x = C->top();      // Dead path?  Use a dead data op
+    } else {
+      x = node->clone();        // Else clone up the data op
+      the_clone = x;            // Remember for possible deletion.
+      // Alter data node to use pre-phi inputs
+      if (node->in(0) == region) {
+        x->set_req(0, in);
+      } else {
+        x->set_req(0, NULL);
+      }
+      if (mem->is_Phi() && (mem->in(0) == region)) {
+        x->set_req(MemNode::Memory, mem->in(i)); // Use pre-Phi input for the clone.
+      }
+      if (address->is_Phi() && address->in(0) == region) {
+        x->set_req(MemNode::Address, address->in(i)); // Use pre-Phi input for the clone
+      }
+      if (base_is_phi && (base->in(0) == region)) {
+        Node* base_x = base->in(i); // Clone address for loads from boxed objects.
+        Node* adr_x = phase->transform(new AddPNode(base_x,base_x,address->in(AddPNode::Offset)));
+        x->set_req(MemNode::Address, adr_x);
+      }
+    }
+    // Check for a 'win' on some paths
+    const Type *t = x->Value(igvn);
+
+    bool singleton = t->singleton();
+
+    // See comments in PhaseIdealLoop::split_thru_phi().
+    if (singleton && t == Type::TOP) {
+      singleton &= region->is_Loop() && (i != LoopNode::EntryControl);
+    }
+
+    if (singleton) {
+      x = igvn->makecon(t);
+    } else {
+      // We now call Identity to try to simplify the cloned node.
+      // Note that some Identity methods call phase->type(this).
+      // Make sure that the type array is big enough for
+      // our new node, even though we may throw the node away.
+      // (This tweaking with igvn only works because x is a new node.)
+      igvn->set_type(x, t);
+      // If x is a TypeNode, capture any more-precise type permanently into Node
+      // otherwise it will be not updated during igvn->transform since
+      // igvn->type(x) is set to x->Value() already.
+      x->raise_bottom_type(t);
+      Node* y = x->Identity(igvn);
+      if (y != x) {
+        x = y;
+      } else {
+        y = igvn->hash_find_insert(x);
+        if (y) {
+          x = y;
+        } else {
+          // Else x is a new node we are keeping
+          // We do not need register_new_node_with_optimizer
+          // because set_type has already been called.
+          igvn->_worklist.push(x);
+        }
+      }
+    }
+    if (x != the_clone && the_clone != NULL) {
+      igvn->remove_dead_node(the_clone);
+    }
+    phi->set_req(i, x);
+  }
+  // Record Phi
+  igvn->register_new_node_with_optimizer(phi);
+  return phi;
+}
+
 //------------------------------Ideal------------------------------------------
 // Return a node which is more "ideal" than the current node.  Must preserve
 // the CFG, but we can still strip out dead paths.
@@ -2337,6 +2515,74 @@ Node *PhiNode::Ideal(PhaseGVN *phase, bool can_reshape) {
         set_req(i, new_in);
         progress = this;
       }
+    }
+
+    if (!progress && SplitMemPhi) {
+      RegionNode *r = region();
+      int insts = 0; // instances;
+
+      for (uint i=1; i<req(); ++i) {
+        Node *result;
+        if (at->isa_oopptr()) {
+          result = MemNode::optimize_simple_memory_chain(in(i), at->is_oopptr(), NULL, phase);
+        } else {
+          result = in(i);
+        }
+
+        if (result->is_Proj() && result->as_Proj()->_con == TypeFunc::Memory) {
+          // memory points to global or from initialize node
+          // todo: some classes require to insert Membar after Initialize
+          // see https://issues.amazon.com/issues/JVM-1097?selectedConversation=0c456132-5cb9-4b06-9723-284a76d3252d
+          if (result->is_Parm() || result->in(0)->is_Initialize() || result->in(0)->Opcode() == Op_MemBarRelease) {
+            insts++;
+          }
+        }
+      }
+
+      if (insts > 1) {
+        PhaseIterGVN *igvn = phase->is_IterGVN();
+        Unique_Node_List worklist;
+        // find the nexus {mPhi, Phi}, which is controlled by region
+        for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
+          Node *n = fast_out(i);
+
+          if (n->is_Mem()) {
+            Node *addr = n->in(MemNode::Address);
+
+            if (addr->is_AddP()) {
+              intptr_t offset;
+              Node *base = AddPNode::Ideal_base_and_offset(addr, phase, offset);
+              if (base != NULL && base->Opcode() == Op_CastPP) {
+                base = base->in(1);
+              }
+
+              // fields
+              if (base != NULL && base->is_Phi() && base->in(0) == r && offset != Type::OffsetBot && !worklist.member(n)) {
+                if (Verbose) {
+                  tty->print("find a split nexus: {mphi=%d, phi=%d}, splitting node:", _idx, base->_idx);
+                  n->dump("\n", false, tty);
+                }
+                worklist.push(n);
+              }
+            }
+          }
+        }
+
+        for (uint i = 0; i < worklist.size(); ++i) {
+          Node *n = worklist.at(i);
+          if (n->is_Store()) continue;
+
+          Node *phi = split_through_phi(n->as_Mem(), phase);
+          if (phi != NULL) {
+            if (Verbose) {
+              tty->print_cr("split node %d", n->_idx);
+            }
+
+            igvn->replace_node(n, phi);
+            progress = this;
+          }
+        }
+      } // win
     }
   }
 

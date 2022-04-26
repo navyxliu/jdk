@@ -1484,7 +1484,7 @@ Node* LoadNode::eliminate_autobox(PhaseIterGVN* igvn) {
   return NULL;
 }
 
-static bool stable_phi(PhiNode* phi, PhaseGVN *phase) {
+bool stable_phi(PhiNode* phi, PhaseGVN *phase) {
   Node* region = phi->in(0);
   if (region == NULL) {
     return false; // Wait stable graph

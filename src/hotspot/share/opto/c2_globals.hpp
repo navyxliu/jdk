@@ -621,6 +621,10 @@
   notproduct(bool, TraceCISCSpill, false,                                   \
           "Trace allocators use of cisc spillable instructions")            \
                                                                             \
+  product(bool, SplitMemPhi, true,                                          \
+          "Clone compares and control flow through merge points to fold "   \
+          "some branches")                                                  \
+                                                                            \
   product(bool, SplitIfBlocks, true,                                        \
           "Clone compares and control flow through merge points to fold "   \
           "some branches")                                                  \
