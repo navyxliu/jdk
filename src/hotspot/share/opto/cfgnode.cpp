@@ -2538,8 +2538,8 @@ Node *PhiNode::Ideal(PhaseGVN *phase, bool can_reshape) {
           }
         }
       }
-
-      if (insts > 1) {
+      // splif if we can identify at least one instance
+      if (insts > 0 && req() > 1) {
         PhaseIterGVN *igvn = phase->is_IterGVN();
         Unique_Node_List worklist;
         // find the nexus {mPhi, Phi}, which is controlled by region
@@ -2559,7 +2559,7 @@ Node *PhiNode::Ideal(PhaseGVN *phase, bool can_reshape) {
               // fields
               if (base != NULL && base->is_Phi() && base->in(0) == r && offset != Type::OffsetBot && !worklist.member(n)) {
                 if (Verbose) {
-                  tty->print("find a split nexus: {mphi=%d, phi=%d}, splitting node:", _idx, base->_idx);
+                  tty->print_cr("find a split nexus: {mphi=%d, phi=%d}, splitting node:", _idx, base->_idx);
 #ifndef PRODUCT
                   n->dump("\n", false, tty);
 #endif
