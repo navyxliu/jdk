@@ -656,7 +656,7 @@ void GraphKit::builtin_throw(Deoptimization::DeoptReason reason) {
 
 
 //----------------------------PreserveJVMState---------------------------------
-PreserveJVMState::PreserveJVMState(GraphKit* kit, bool clone_map) {
+PreserveJVMState::PreserveJVMState(GraphKit* kit, bool clone_map, bool preserve_bci) {
   debug_only(kit->verify_map());
   _kit    = kit;
   _map    = kit->map();   // preserve the map
@@ -664,6 +664,7 @@ PreserveJVMState::PreserveJVMState(GraphKit* kit, bool clone_map) {
   kit->set_map(clone_map ? kit->clone_map() : NULL);
 #ifdef ASSERT
   _bci    = kit->bci();
+  _preserve_bci = preserve_bci;
   Parse* parser = kit->is_Parse();
   int block = (parser == NULL || parser->block() == NULL) ? -1 : parser->block()->rpo();
   _block  = block;
@@ -672,7 +673,7 @@ PreserveJVMState::PreserveJVMState(GraphKit* kit, bool clone_map) {
 PreserveJVMState::~PreserveJVMState() {
   GraphKit* kit = _kit;
 #ifdef ASSERT
-  assert(kit->bci() == _bci, "bci must not shift");
+  assert(!_preserve_bci || kit->bci() == _bci, "bci must not shift");
   Parse* parser = kit->is_Parse();
   int block = (parser == NULL || parser->block() == NULL) ? -1 : parser->block()->rpo();
   assert(block == _block,    "block must not shift");
@@ -2126,7 +2127,24 @@ void GraphKit::uncommon_trap(int trap_request,
         iff->_prob = PROB_MAX;
     }
   }
+#if 0
+  int next_bci = bci();
+  if (reason == Deoptimization::Reason_unstable_if && method() != NULL && comment != NULL) {
+    ciBytecodeStream iter(method());
+    iter.reset_to_bci(bci());
+    iter.next();
+    if (iter.cur_bc() == Bytecodes::_if_icmple) {
+      if (strcmp(comment, "taken always") == 0) {// fall through case
+        next_bci = iter.next_bci();
+      } else {
+        next_bci = iter.get_dest();
+      }
+    }
+  }
+  // Clear out dead values from the debug info.
+  kill_dead_locals(next_bci);
 
+#endif
   // Clear out dead values from the debug info.
   kill_dead_locals();
 

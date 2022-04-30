@@ -145,6 +145,7 @@ public class TestUnstableIfTrap {
         Label unstableIfLocation = new Label();
         boolean shouldBeEmitted;
         boolean compiledToEarly = false;
+        boolean adjustBciForUnstableIf = WB.getBooleanVMFlag("UncommonTrapBCIAdjust");
 
         try {
             Class testClass = ByteCodeLoader.load(CLASS_NAME,
@@ -173,7 +174,10 @@ public class TestUnstableIfTrap {
             throw new Error("Test case should be generated, loaded and executed"
                     + " without any issues.", e);
         }
-
+        int bci = unstableIfLocation.getOffset();
+        if (adjustBciForUnstableIf && !testCase.predicate) {
+          bci += 3; // fall-through. ifeq 2: branchbyte1, branchbyte2
+        }
         shouldBeFired &= shouldBeEmitted;
 
         Properties properties = new Properties();
@@ -187,7 +191,7 @@ public class TestUnstableIfTrap {
         properties.setProperty(Verifier.UNCOMMON_TRAP_COMMENT,
                 testCase.comment);
         properties.setProperty(Verifier.UNCOMMON_TRAP_BCI,
-                Integer.toString(unstableIfLocation.getOffset()));
+                Integer.toString(bci));
 
         properties.list(System.out);
 

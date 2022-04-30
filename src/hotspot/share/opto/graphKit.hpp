@@ -916,12 +916,13 @@ class PreserveJVMState: public StackObj {
 #ifdef ASSERT
   int            _block;  // PO of current block, if a Parse
   int            _bci;
+  bool           _preserve_bci;
 #endif
   SafePointNode* _map;
   uint           _sp;
 
  public:
-  PreserveJVMState(GraphKit* kit, bool clone_map = true);
+  PreserveJVMState(GraphKit* kit, bool clone_map = true, bool preserve_bci = true);
   ~PreserveJVMState();
 };
 

@@ -1398,7 +1398,7 @@ void Parse::do_ifnull(BoolTest::mask btest, Node *c) {
   IfNode *iff = create_and_xform_if( control(), tst, prob, cnt );
   assert(iff->_prob > 0.0f,"Optimizer made bad probability in parser");
   // True branch
-  { PreserveJVMState pjvms(this);
+  { PreserveJVMState pjvms(this, true, false);
     Node* iftrue  = _gvn.transform( new IfTrueNode (iff) );
     set_control(iftrue);
 
@@ -1427,6 +1427,7 @@ void Parse::do_ifnull(BoolTest::mask btest, Node *c) {
       next_block->next_path_num();
     }
   } else  {                     // Path is live.
+    //PreserveJVMState pjvms(this, false/*clone_map*/, false/*preserve_bci*/);
     adjust_map_after_if(BoolTest(btest).negate(), c, 1.0-prob,
                         next_block, branch_block);
   }
@@ -1512,7 +1513,7 @@ void Parse::do_if(BoolTest::mask btest, Node* c) {
   }
 
   // Branch is taken:
-  { PreserveJVMState pjvms(this);
+  { PreserveJVMState pjvms(this, true, false);
     taken_branch = _gvn.transform(taken_branch);
     set_control(taken_branch);
 
@@ -1539,6 +1540,7 @@ void Parse::do_if(BoolTest::mask btest, Node* c) {
       next_block->next_path_num();
     }
   } else {
+    //PreserveJVMState pjvms(this, false/*clone_map*/, false/*preserve_bci*/);
     adjust_map_after_if(untaken_btest, c, untaken_prob,
                         next_block, branch_block);
   }
@@ -1584,7 +1586,21 @@ void Parse::adjust_map_after_if(BoolTest::mask btest, Node* c, float prob,
   bool is_fallthrough = (path == successor_for_bci(iter().next_bci()));
 
   if (path_is_suitable_for_uncommon_trap(prob)) {
-    repush_if_args();
+    bool changed = false;
+    if (UncommonTrapBCIAdjust) {
+      if (is_fallthrough) {
+        //tty->print_cr("fall throught case original_bci = %d, new bci = %d", bci(), iter().next_bci());
+        set_bci(iter().next_bci());
+        changed = true;
+      } else {
+        tty->print_cr("jump case original_bci = %d, new bci = %d", bci(), iter().get_dest());
+        set_bci(iter().get_dest());
+        changed = true;
+      }
+    }
+    if (!changed) {
+      repush_if_args();
+    }
     uncommon_trap(Deoptimization::Reason_unstable_if,
                   Deoptimization::Action_reinterpret,
                   NULL,

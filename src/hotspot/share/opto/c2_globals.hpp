@@ -411,6 +411,9 @@
           "Set level of loop optimization for tier 1 compiles")             \
           range(5, 43)                                                      \
                                                                             \
+  product(bool, UncommonTrapBCIAdjust, false,                               \
+          "Set level of loop optimization for tier 1 compiles")             \
+                                                                            \
   /* controls for heat-based inlining */                                    \
                                                                             \
   develop(intx, NodeCountInliningCutoff, 18000,                             \
