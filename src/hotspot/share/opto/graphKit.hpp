@@ -915,9 +915,9 @@ class PreserveJVMState: public StackObj {
   GraphKit*      _kit;
 #ifdef ASSERT
   int            _block;  // PO of current block, if a Parse
+#endif
   int            _bci;
   bool           _preserve_bci;
-#endif
   SafePointNode* _map;
   uint           _sp;
 

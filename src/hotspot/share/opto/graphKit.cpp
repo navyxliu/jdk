@@ -661,10 +661,10 @@ PreserveJVMState::PreserveJVMState(GraphKit* kit, bool clone_map, bool preserve_
   _kit    = kit;
   _map    = kit->map();   // preserve the map
   _sp     = kit->sp();
-  kit->set_map(clone_map ? kit->clone_map() : NULL);
-#ifdef ASSERT
   _bci    = kit->bci();
   _preserve_bci = preserve_bci;
+  kit->set_map(clone_map ? kit->clone_map() : NULL);
+#ifdef ASSERT
   Parse* parser = kit->is_Parse();
   int block = (parser == NULL || parser->block() == NULL) ? -1 : parser->block()->rpo();
   _block  = block;
@@ -678,6 +678,9 @@ PreserveJVMState::~PreserveJVMState() {
   int block = (parser == NULL || parser->block() == NULL) ? -1 : parser->block()->rpo();
   assert(block == _block,    "block must not shift");
 #endif
+  if (!_preserve_bci) {
+    kit->set_bci(_bci);
+  }
   kit->set_map(_map);
   kit->set_sp(_sp);
 }

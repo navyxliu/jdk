@@ -1427,7 +1427,6 @@ void Parse::do_ifnull(BoolTest::mask btest, Node *c) {
       next_block->next_path_num();
     }
   } else  {                     // Path is live.
-    //PreserveJVMState pjvms(this, false/*clone_map*/, false/*preserve_bci*/);
     adjust_map_after_if(BoolTest(btest).negate(), c, 1.0-prob,
                         next_block, branch_block);
   }
@@ -1540,7 +1539,6 @@ void Parse::do_if(BoolTest::mask btest, Node* c) {
       next_block->next_path_num();
     }
   } else {
-    //PreserveJVMState pjvms(this, false/*clone_map*/, false/*preserve_bci*/);
     adjust_map_after_if(untaken_btest, c, untaken_prob,
                         next_block, branch_block);
   }
@@ -1593,7 +1591,7 @@ void Parse::adjust_map_after_if(BoolTest::mask btest, Node* c, float prob,
         set_bci(iter().next_bci());
         changed = true;
       } else {
-        tty->print_cr("jump case original_bci = %d, new bci = %d", bci(), iter().get_dest());
+        //tty->print_cr("jump case original_bci = %d, new bci = %d", bci(), iter().get_dest());
         set_bci(iter().get_dest());
         changed = true;
       }
