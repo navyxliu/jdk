@@ -411,7 +411,7 @@
           "Set level of loop optimization for tier 1 compiles")             \
           range(5, 43)                                                      \
                                                                             \
-  product(bool, UncommonTrapBCIAdjust, false,                               \
+  product(bool, UncommonTrapBCIAdjust, true,                                \
           "Set level of loop optimization for tier 1 compiles")             \
                                                                             \
   /* controls for heat-based inlining */                                    \
