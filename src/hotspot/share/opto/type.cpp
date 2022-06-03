@@ -4204,7 +4204,7 @@ bool TypeInstPtr::maybe_java_subtype_of_helper(const TypeOopPtr* other, bool thi
   assert(other->isa_instptr(), "unsupported");
 
   if (this_exact && other_exact) {
-    return is_java_subtype_of(other);
+    return is_java_subtype_of_helper(other, this_exact, other_exact);
   }
 
   if (!_klass->is_subtype_of(other->_klass) && !other->_klass->is_subtype_of(_klass)) {
@@ -5670,7 +5670,7 @@ bool TypeInstKlassPtr::maybe_java_subtype_of_helper(const TypeKlassPtr* other, b
   assert(other->isa_instklassptr(), "unsupported");
 
   if (this_exact && other_exact) {
-    return is_java_subtype_of(other);
+    return is_java_subtype_of_helper(other, this_exact, other_exact);
   }
 
   if (!_klass->is_subtype_of(other->_klass) && !other->_klass->is_subtype_of(_klass)) {

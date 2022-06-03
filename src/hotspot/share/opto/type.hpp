@@ -1207,9 +1207,9 @@ public:
     return klass()->as_instance_klass();
   }
 
-  bool is_same_java_type_as(const TypeOopPtr* other) const;
-  bool is_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const;
-  bool maybe_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const;
+  bool is_same_java_type_as(const TypeOopPtr* other) const override;
+  bool is_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const override;
+  bool maybe_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const override;
 
   // Make a pointer to a constant oop.
   static const TypeInstPtr *make(ciObject* o) {
@@ -1322,9 +1322,9 @@ class TypeAryPtr : public TypeOopPtr {
 
 public:
 
-  bool is_same_java_type_as(const TypeOopPtr* other) const;
-  bool is_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const;
-  bool maybe_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const;
+  bool is_same_java_type_as(const TypeOopPtr* other) const override;
+  bool is_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const override;
+  bool maybe_java_subtype_of_helper(const TypeOopPtr* other, bool this_exact, bool other_exact) const override;
 
   // returns base element type, an instance klass (and not interface) for object arrays
   const Type* base_element_type(int& dims) const;
@@ -1531,9 +1531,9 @@ public:
     return klass()->as_instance_klass();
   }
 
-  bool is_same_java_type_as(const TypeKlassPtr* other) const;
-  bool is_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const;
-  bool maybe_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const;
+  bool is_same_java_type_as(const TypeKlassPtr* other) const override;
+  bool is_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const override;
+  bool maybe_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const override;
 
   static const TypeInstKlassPtr *make(ciKlass* k) {
     return make(TypePtr::Constant, k, 0);
@@ -1582,9 +1582,9 @@ public:
 
   static const TypeAryKlassPtr *make(PTR ptr, ciKlass* k, int offset);
 
-  bool is_same_java_type_as(const TypeKlassPtr* other) const;
-  bool is_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const;
-  bool maybe_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const;
+  bool is_same_java_type_as(const TypeKlassPtr* other) const override;
+  bool is_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const override;
+  bool maybe_java_subtype_of_helper(const TypeKlassPtr* other, bool this_exact, bool other_exact) const override;
 
   bool  is_loaded() const { return (_elem->isa_klassptr() ? _elem->is_klassptr()->is_loaded() : true); }
 
