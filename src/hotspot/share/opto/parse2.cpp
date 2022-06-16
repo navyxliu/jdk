@@ -1584,7 +1584,10 @@ void Parse::adjust_map_after_if(BoolTest::mask btest, Node* c, float prob,
 
   bool is_fallthrough = (path == successor_for_bci(iter().next_bci()));
 
-  if (path_is_suitable_for_uncommon_trap(prob)) {
+  if (path_is_suitable_for_uncommon_trap(prob) && !path->is_merged()) {
+    sync_jvms();
+    SafePointNode* sfpt = clone_map();
+
     repush_if_args();
     Node* call = uncommon_trap(Deoptimization::Reason_unstable_if,
                   Deoptimization::Action_reinterpret,
@@ -1592,7 +1595,9 @@ void Parse::adjust_map_after_if(BoolTest::mask btest, Node* c, float prob,
                   (is_fallthrough ? "taken always" : "taken never"));
 
     if (call != nullptr) {
-      C->record_unstable_if_trap(new UnstableIfTrap(call->as_CallStaticJava(), path));
+      UnstableIfTrap* trap = new UnstableIfTrap(call->as_CallStaticJava(), path);
+      trap->save_context(block(), sfpt, btest, c);
+      C->record_unstable_if_trap(trap);
     }
     return;
   }

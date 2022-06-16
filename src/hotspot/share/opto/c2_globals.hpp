@@ -414,6 +414,8 @@
   product(bool, AggressiveLivenessForUnstableIf, true, DIAGNOSTIC,          \
           "Use aggressive liveness for UnstableIf traps")                   \
                                                                             \
+  product(bool, SuppressTrivialUnstableIf, true, DIAGNOSTIC,                \
+          "Use aggressive liveness for UnstableIf traps")                   \
   /* controls for heat-based inlining */                                    \
                                                                             \
   develop(intx, NodeCountInliningCutoff, 18000,                             \

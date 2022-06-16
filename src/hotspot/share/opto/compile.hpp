@@ -680,6 +680,8 @@ class Compile : public Phase {
   int           expensive_count()         const { return _expensive_nodes.length(); }
   int           coarsened_count()         const { return _coarsened_locks.length(); }
 
+  GrowableArray<UnstableIfTrap*>& unstable_if_traps() { return _unstable_if_traps; }
+
   Node*         macro_node(int idx)       const { return _macro_nodes.at(idx); }
   Node*         predicate_opaque1_node(int idx) const { return _predicate_opaqs.at(idx); }
   Node*         skeleton_predicate_opaque4_node(int idx) const { return _skeleton_predicate_opaqs.at(idx); }

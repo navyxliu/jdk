@@ -168,6 +168,7 @@ class Parse : public GraphKit {
     int                _all_successors; // Include exception paths also.
     Block**            _successors;
 
+    Node_List          _pending_sfpts;
    public:
 
     // Set up the block data structure itself.
@@ -186,6 +187,8 @@ class Parse : public GraphKit {
 
     SafePointNode* start_map() const       { assert(is_merged(),"");   return _start_map; }
     void set_start_map(SafePointNode* m)   { assert(!is_merged(), ""); _start_map = m; }
+    void save_sfpt(SafePointNode* sfpt)    { _pending_sfpts.push(sfpt); }
+    Node_List& pending_sfpts()             { return _pending_sfpts; }
 
     // True after any predecessor flows control into this block
     bool is_merged() const                 { return _start_map != NULL; }
@@ -611,6 +614,11 @@ class UnstableIfTrap {
   // Parse::_blocks outlive Parse object itself.
   // They are reclaimed by ResourceMark in CompileBroker::invoke_compiler_on_method().
   Parse::Block* const _path; // the pruned path
+public:
+  Parse::Block* _block;
+  SafePointNode* _sfpt;
+  BoolTest::mask _btest;
+  Node* _cmp;
   bool _modified;            // modified locals based on next_bci()
 
 public:
@@ -637,6 +645,12 @@ public:
     return _path;
   }
 
+  void save_context(Parse::Block* block, SafePointNode* sfpt, BoolTest::mask btest, Node* c) {
+    _block = block;
+    _sfpt = sfpt;
+    _btest = btest;
+    _cmp = c;
+  }
   // This can only be determined in parse-time.
   // if _path has only one predecessor, it is trivial if this block is small(1~2 bytecodes)
   // or if _path has more than one predecessor and has been parsed, _unc does not mask out any real code.

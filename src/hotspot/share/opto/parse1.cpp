@@ -667,6 +667,34 @@ void Parse::do_all_blocks() {
 
       NOT_PRODUCT(blocks_parsed++);
 
+      if (SuppressTrivialUnstableIf) {
+        // Merge trivial unstable_ifs
+        GrowableArray<UnstableIfTrap* >& unstable_if_traps = C->unstable_if_traps();
+        for (int i = unstable_if_traps.length() - 1; i >= 0; --i) {
+          UnstableIfTrap* trap = unstable_if_traps.at(i);
+
+          if (block == trap->path()) {
+            set_block(trap->_block);
+            set_map(trap->_sfpt);
+            set_sp(trap->_sfpt->jvms()->sp());
+
+            adjust_map_after_if(trap->_btest, trap->_cmp, PROB_MAX, block, NULL);
+            int pnum = block->next_path_num();
+            merge_common(block, pnum);
+
+            CallStaticJavaNode* unc = trap->uncommon_trap();
+            //unc->disconnect_inputs(C);
+            unc->set_req(0, top());
+            record_for_igvn(unc);
+            //tty->print("mark dead: ");
+            //unc->dump();
+
+            unstable_if_traps.delete_at(i);
+            load_state_from(block);
+          }
+        }
+      }
+
       progress = true;
       if (block->is_loop_head() || block->is_handler() || (has_irreducible && !block->is_ready())) {
         // Not all preds have been parsed.  We must build phis everywhere.
