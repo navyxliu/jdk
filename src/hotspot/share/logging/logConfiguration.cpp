@@ -618,11 +618,16 @@ void LogConfiguration::print_command_line_help(outputStream* out) {
                                        " This will cause existing log files to be overwritten.");
   out->cr();
 
-  out->print_cr("Asynchronous logging (off by default):");
+  out->print_cr("Asynchronous logging (on by default):");
   out->print_cr(" -Xlog:async");
   out->print_cr("  All log messages are written to an intermediate buffer first and will then be flushed"
                 " to the corresponding log outputs by a standalone thread. Write operations at logsites are"
                 " guaranteed non-blocking.");
+  out->cr();
+
+  out->print_cr("Synchronous logging:");
+  out->print_cr(" -Xlog:sync");
+  out->print_cr("  All log messages are written to outputs synchronously.");
   out->cr();
 
   out->print_cr("Some examples:");
@@ -697,4 +702,4 @@ void LogConfiguration::notify_update_listeners() {
   }
 }
 
-bool LogConfiguration::_async_mode = false;
+bool LogConfiguration::_async_mode = true;
