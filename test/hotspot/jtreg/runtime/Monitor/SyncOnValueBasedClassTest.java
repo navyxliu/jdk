@@ -62,7 +62,7 @@ public class SyncOnValueBasedClassTest {
 
     private static void generateTests() {
         initTestObjects();
-        String[] commonFatalTestsFlags = {"-XX:+UnlockDiagnosticVMOptions", "-XX:-CreateCoredumpOnCrash", "-XX:DiagnoseSyncOnValueBasedClasses=1"};
+        String[] commonFatalTestsFlags = {"-XX:+UnlockDiagnosticVMOptions", "-Xlog:sync", "-XX:-CreateCoredumpOnCrash", "-XX:DiagnoseSyncOnValueBasedClasses=1"};
         fatalTests = new String[specificFlags.length * testObjects.size()][];
         for (int i = 0; i < specificFlags.length; i++) {
             for (int j = 0; j < testObjects.size(); j++) {
@@ -72,7 +72,7 @@ public class SyncOnValueBasedClassTest {
                                           .toArray(String[]::new);
             }
         }
-        String[] commonLogTestsFlags = {"-XX:+UnlockDiagnosticVMOptions", "-XX:DiagnoseSyncOnValueBasedClasses=2"};
+        String[] commonLogTestsFlags = {"-XX:+UnlockDiagnosticVMOptions", "-Xlog:sync", "-XX:DiagnoseSyncOnValueBasedClasses=2"};
         logTests = new String[specificFlags.length][];
         for (int i = 0; i < specificFlags.length; i++) {
             logTests[i] = Stream.of(commonLogTestsFlags, specificFlags[i], new String[] {"SyncOnValueBasedClassTest$LogTest"})
