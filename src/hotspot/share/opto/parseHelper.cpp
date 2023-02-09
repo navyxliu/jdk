@@ -359,9 +359,10 @@ void PEAState::add_new_allocation(Node* obj) {
   if (nfields >= 0) {
     AllocateNode* alloc = obj->in(1)->in(0)->as_Allocate();
 #ifndef PRODUCT
-    if (PEA_debug_idx > 0 && alloc->_idx != PEA_debug_idx) {         // only allow PEA_debug_idx
+    // node_idx_t is unsigned. Use static_cast<> here to avoid comparison between signed and unsigned.
+    if (PEA_debug_idx > 0 && alloc->_idx != static_cast<node_idx_t>(PEA_debug_idx)) {         // only allow PEA_debug_idx
         return;
-    } else if (PEA_debug_idx < 0 && alloc->_idx == -PEA_debug_idx) { // block PEA_debug_idx
+    } else if (PEA_debug_idx < 0 && alloc->_idx == static_cast<node_idx_t>(-PEA_debug_idx)) { // block PEA_debug_idx
       return;
     }
 #endif
