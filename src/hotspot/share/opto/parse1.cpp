@@ -2179,7 +2179,7 @@ Node* Parse::ensure_object_materialized(Node* var, PEAState& state, SafePointNod
 
   GraphKit kit(from_map->jvms());
   kit.set_control(r->in(pnum));
-  EscapedState* es = state.materialize(&kit, var, from_map);
+  EscapedState* es = state.materialize(&kit, var);
   add_exception_states_from(kit.transfer_exceptions_into_jvms());
   Node* mv = es->get_materialized_value();
   r->set_req(pnum, mv->in(0));
