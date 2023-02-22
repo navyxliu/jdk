@@ -464,14 +464,6 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
     tty->print_cr("PEA materializes a virtual object: %d", alloc->_idx);
   }
 #endif
-  /*{
-  JVMState* jvms = kit->sync_jvms();
-  SafePointNode* map = kit->map();
-
-  kit->kill_dead_locals();
-  kit->clean_stack(jvms->sp());
-  jvms->set_should_reexecute(false);
-  }*/
   Compile* C = kit->C;
   const TypeOopPtr* oop_type = var->as_Type()->type()->is_oopptr();
   Node* objx = kit->materialize_object(alloc, oop_type);
