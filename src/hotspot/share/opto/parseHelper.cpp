@@ -546,7 +546,8 @@ void PEAState::print_on(outputStream* os) const {
   os->print_cr("PEAState:");
 
   _state.iterate([&](ObjID obj, ObjectState* state) {
-    os->print("Obj#%d(%s) ref = %d aliases = [", obj->_idx, state->is_virtual() ? "Virt" : "Mat", state->ref_cnt());
+    bool is_virt = state->is_virtual();
+    os->print("Obj#%d(%s) ref = %d aliases = [", obj->_idx, is_virt ? "Virt" : "Mat", state->ref_cnt());
 
     _alias.iterate([&](Node* node, ObjID obj2) {
       if (obj == obj2){
@@ -556,6 +557,21 @@ void PEAState::print_on(outputStream* os) const {
     });
 
     os->print_cr("]");
+
+    if (is_virt) {
+      VirtualState* vs = static_cast<VirtualState*>(state);
+      os->print_cr("virt = %p", state);
+
+      for (uint i = 0; i < vs->_nfields; ++i) {
+        Node* val = vs->_entries[i];
+        os->print("#%d: ", i);
+        if (val != nullptr) {
+          val->dump();
+        } else {
+          os->print_cr(" nil");
+        }
+      }
+    }
     return true;
   });
 }
