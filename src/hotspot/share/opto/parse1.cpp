@@ -1841,7 +1841,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
                       phi->replace_edge(m, mv);
                       as.update(id, new EscapedState(phi));
                     } else {
-                      // TODO: merge two virtuals
+                      assert(false, "should be the same oop if they are both virtual");
                     }
                   }
                 }
@@ -1851,6 +1851,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           break;
         }
       }
+
       // At this point, n might be top if:
       //  - there is no phi (because TypeFlow detected a conflict), or
       //  - the corresponding control edges is top (a dead incoming path)

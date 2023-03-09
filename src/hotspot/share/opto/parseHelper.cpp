@@ -315,26 +315,32 @@ void Parse::dump_map_adr_mem() const {
 // Our adaption to C2.
 // https://gist.github.com/navyxliu/62a510a5c6b0245164569745d758935b
 //
-VirtualState::VirtualState(uint nfields): _lockCount(0) {
+VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields) {
   Compile* C = Compile::current();
   _entries = NEW_ARENA_ARRAY(C->parser_arena(), Node*, nfields);
   // only track explicit stores.
   // see IntializeNode semantics in memnode.cpp
-  for (uint i = 0; i < nfields; ++i) {
+  for (int i = 0; i < nfields; ++i) {
     _entries[i] = nullptr;
   }
-  DEBUG_ONLY(_nfields = nfields);
 }
 
 // do NOT call base's copy constructor. we would like to reset refcnt!
 VirtualState::VirtualState(const VirtualState& other) {
   _lockCount = other._lockCount;
-  _entries   = other._entries;
-  DEBUG_ONLY(_nfields = other._nfields);
+  _nfields   = other._nfields;
+  _entries = NEW_ARENA_ARRAY(Compile::current()->parser_arena(), Node*, _nfields);
+
+  Node** dst = _entries;
+  Node** src = other._entries;
+  int sz = _nfields;
+  while (sz-- > 0) {
+    *dst++ = *src++;
+  }
 }
 
 void VirtualState::update_field(int idx, Node* val) {
-  assert(idx >= 0 && (uint)idx < _nfields, "sanity check");
+  assert(idx >= 0 && idx < _nfields, "sanity check");
   _entries[idx] = val;
 }
 
@@ -562,7 +568,7 @@ void PEAState::print_on(outputStream* os) const {
       VirtualState* vs = static_cast<VirtualState*>(state);
       os->print_cr("virt = %p", state);
 
-      for (uint i = 0; i < vs->_nfields; ++i) {
+      for (int i = 0; i < vs->_nfields; ++i) {
         Node* val = vs->_entries[i];
         os->print("#%d: ", i);
         if (val != nullptr) {

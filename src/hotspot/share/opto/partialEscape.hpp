@@ -60,13 +60,14 @@ class ObjectState {
 class VirtualState: public ObjectState {
   friend class PEAState;
   int _lockCount;
+  int _nfields;
   Node** _entries;
-  DEBUG_ONLY(uint _nfields);
+
 
  protected:
   VirtualState(const VirtualState& other);
  public:
-  VirtualState(uint nfields);
+  VirtualState(int nfields);
 
   bool is_virtual() const override { return true; }
   Node* get_materialized_value() override { return nullptr; }
