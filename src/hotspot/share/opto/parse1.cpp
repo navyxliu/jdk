@@ -1787,6 +1787,9 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     // Update all the non-control inputs to map:
     assert(TypeFunc::Parms == newin->jvms()->locoff(), "parser map should contain only youngest jvms");
     bool check_elide_phi = target->is_SEL_backedge(save_block);
+    PEAState& pred_as = newin->jvms()->alloc_state();
+    PEAState& as = block()->state();
+
     // from right to left, we update ctrl, I_O and memory til the last minute
     // because PEA materialization may change them.
     for (uint j = newin->req()-1; j >= 1; --j) {
@@ -1823,8 +1826,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
               // Part-1: only check 'm'. ensure_phi has replaced m with phi.
               if (DoPartialEscapeAnalysis && phi != nullptr) {
-                PEAState& as = block()->state();
-                const PEAState& pred_as = newin->jvms()->alloc_state();
                 ObjID id = as.is_alias(phi);
 
                 if (id != nullptr) {
@@ -1850,6 +1851,18 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           }
           break;
         }
+      } else {
+        // even m and n are same, we sitll need to merge
+        if (DoPartialEscapeAnalysis) {
+          ObjID id = as.is_alias(m);
+
+          if (id != nullptr && as.get_object_state(id)->is_virtual()) {
+            ObjectState* pred_os = pred_as.get_object_state(id);
+            assert(pred_os->is_virtual(), "sanity check");
+            VirtualState* vs = static_cast<VirtualState*>(as.get_object_state(id));
+            vs->merge(*pred_os, r, pnum);
+          }
+        }
       }
 
       // At this point, n might be top if:
@@ -1863,8 +1876,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
         // Part-2: materialize 'n' if it needs
         if (DoPartialEscapeAnalysis) {
-          PEAState& as = block()->state();
-          PEAState& pred_as = newin->jvms()->alloc_state();
           ObjID id = as.is_alias(phi);
 
           if (as.contains(id)) {

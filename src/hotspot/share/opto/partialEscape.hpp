@@ -55,6 +55,7 @@ class ObjectState {
 
   int ref_cnt() const { return _refcnt; }
 
+  virtual ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) = 0;
 };
 
 class VirtualState: public ObjectState {
@@ -62,10 +63,11 @@ class VirtualState: public ObjectState {
   int _lockCount;
   int _nfields;
   Node** _entries;
-
+  GrowableArray<VirtualState*> _diverged; // only record VirtualState with different fields;
 
  protected:
   VirtualState(const VirtualState& other);
+
  public:
   VirtualState(int nfields);
 
@@ -74,7 +76,14 @@ class VirtualState: public ObjectState {
   ObjectState* clone() const override {
     return new VirtualState(*this);
   }
+
+  bool is_singleton() const {
+    return 0 == _diverged.length();
+  }
+
   void update_field(int idx, Node* val);
+
+  ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override;
 };
 
 class EscapedState: public ObjectState {
@@ -87,6 +96,9 @@ class EscapedState: public ObjectState {
   Node* get_materialized_value() override { return _materialized; }
   ObjectState* clone() const override {
     return new EscapedState(_materialized);
+  }
+  ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override {
+    return *this;
   }
 };
 

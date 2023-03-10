@@ -337,11 +337,48 @@ VirtualState::VirtualState(const VirtualState& other) {
   while (sz-- > 0) {
     *dst++ = *src++;
   }
+
+  int len = other._diverged.length();
+  if (len > 0) {
+    _diverged.at_grow(len-1, nullptr);
+
+    for (int i=0; i < len; ++i) {
+      VirtualState* vs = other._diverged.at(i);
+      if (vs == &other) {
+        vs = this;
+      }
+      _diverged.at_put(i, vs);
+    }
+  }
 }
 
 void VirtualState::update_field(int idx, Node* val) {
   assert(idx >= 0 && idx < _nfields, "sanity check");
+  if (!is_singleton()) {
+    _diverged.clear();
+  }
   _entries[idx] = val;
+}
+
+ObjectState& VirtualState::merge(ObjectState& newin, RegionNode* r, int pnum) {
+  assert(newin.is_virtual(), "only support VirtualState");
+
+  bool identical = true;
+  VirtualState* vs = static_cast<VirtualState*>(&newin);
+  if (this != &newin) {
+    assert(vs->_nfields == _nfields, "sanity check");
+    assert(vs->is_singleton(), "only support singleton");
+
+    for (int i = 0; identical && i < _nfields; ++i) {
+      identical &= _entries[i] == vs->_entries[i];
+    }
+  }
+
+  if (identical) {
+    vs = this;
+  }
+  _diverged.at_put_grow(pnum, vs, nullptr);
+  return *this;
 }
 
 void PEAState::add_new_allocation(Node* obj) {
