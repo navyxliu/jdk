@@ -1510,7 +1510,8 @@ void Parse::Block::record_state(Parse* p, int pnum) {
 
   _from_block = p->block();
   _init_pnum = pnum;
-  // it looks like op->block() is null only when the current method is java.lang.Object.<init>
+
+  // it looks like p->block() is null only when the current method is java.lang.Object.<init>
   if (p->block() != nullptr) {
     JVMState* jvms = _start_map->jvms();
     PEAState& state = jvms->alloc_state();
@@ -1525,6 +1526,7 @@ void Parse::Block::record_state(Parse* p, int pnum) {
         state.remove_alias(obj, lv);
       }
     }
+    state.reset_virtual_objects();
   }
 }
 

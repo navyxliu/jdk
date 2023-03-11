@@ -355,7 +355,7 @@ VirtualState::VirtualState(const VirtualState& other) {
 
 void VirtualState::set_field(int idx, Node* val) {
   assert(idx >= 0 && idx < _nfields, "sanity check");
-  if (!is_singleton()) {
+  if (!singleton()) {
     _region = nullptr;
     _diverged.clear();
   }
@@ -366,7 +366,7 @@ Node* VirtualState::get_field(int idx, const Type* t, PhaseGVN& gvn) const {
   assert(idx >= 0 && idx < _nfields, "sanity check");
 
   Node* m = _entries[idx];
-  if (!is_singleton()) {
+  if (!singleton()) {
     for (int i = 0 ; i < _diverged.length(); ++i) {
       VirtualState* vs = _diverged.at(i);
       if (vs == nullptr || vs == this) continue;
@@ -386,16 +386,17 @@ Node* VirtualState::get_field(int idx, const Type* t, PhaseGVN& gvn) const {
 
 ObjectState& VirtualState::merge(ObjectState& newin, RegionNode* r, int pnum) {
   assert(newin.is_virtual(), "only support VirtualState");
-
   assert(_region == nullptr || _region == r, "sanity check");
+
   if (_region == nullptr) {
     _region = r;
   }
+
   bool identical = true;
   VirtualState* vs = static_cast<VirtualState*>(&newin);
   if (this != &newin) {
     assert(vs->_nfields == _nfields, "sanity check");
-    assert(vs->is_singleton(), "only support singleton");
+    assert(vs->singleton(), "only support singleton");
 
     for (int i = 0; identical && i < _nfields; ++i) {
       identical &= _entries[i] == vs->_entries[i];
@@ -407,6 +408,27 @@ ObjectState& VirtualState::merge(ObjectState& newin, RegionNode* r, int pnum) {
   }
   _diverged.at_put_grow(pnum, vs, nullptr);
   return *this;
+}
+
+void VirtualState::set_singleton() {
+  if (!singleton()) {
+    _region = nullptr;
+    _diverged.clear();
+  }
+}
+
+void VirtualState::print_on(outputStream* os) const {
+  os->print_cr("Virt = %p %s", this, singleton() ? "singleton" : "diverged");
+
+  for (int i = 0; i < _nfields; ++i) {
+    Node* val = _entries[i];
+    os->print("#%d: ", i);
+    if (val != nullptr) {
+      val->dump();
+    } else {
+      os->print_cr(" nil");
+    }
+  }
 }
 
 void PEAState::add_new_allocation(Node* obj) {
@@ -620,6 +642,16 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
   return escaped;
 }
 
+void PEAState::reset_virtual_objects() {
+  _state.iterate([&](ObjID obj, ObjectState* os) {
+     if (os->is_virtual()) {
+       VirtualState* vs = static_cast<VirtualState*>(os);
+       vs->set_singleton();
+     }
+     return true;
+  });
+}
+
 #ifndef PRODUCT
 void PEAState::print_on(outputStream* os) const {
   os->print_cr("PEAState:");
@@ -639,24 +671,12 @@ void PEAState::print_on(outputStream* os) const {
 
     if (is_virt) {
       VirtualState* vs = static_cast<VirtualState*>(state);
-      os->print_cr("virt = %p", state);
-
-      for (int i = 0; i < vs->_nfields; ++i) {
-        Node* val = vs->_entries[i];
-        os->print("#%d: ", i);
-        if (val != nullptr) {
-          val->dump();
-        } else {
-          os->print_cr(" nil");
-        }
-      }
+      vs->print_on(os);
     }
     return true;
   });
 }
-#endif
 
-#ifdef ASSERT
 void PEAState::validate() const {
   _state.iterate([&](ObjID obj, ObjectState* state) {
     int cnt = 0;

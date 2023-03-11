@@ -78,13 +78,15 @@ class VirtualState: public ObjectState {
     return new VirtualState(*this);
   }
 
-  bool is_singleton() const {
+  bool singleton() const {
     return 0 == _diverged.length();
   }
+  void set_singleton();
 
   void set_field(int idx, Node* val);
   Node* get_field(int idx, const Type* type, PhaseGVN& gvn) const;
   ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override;
+  void print_on(outputStream* os) const;
 };
 
 class EscapedState: public ObjectState {
@@ -161,6 +163,7 @@ class PEAState {
   void add_new_allocation(Node* obj);
   EscapedState* materialize(GraphKit* kit, Node* var);
 
+  void reset_virtual_objects();
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif
