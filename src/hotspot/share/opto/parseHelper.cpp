@@ -315,7 +315,7 @@ void Parse::dump_map_adr_mem() const {
 // Our adaption to C2.
 // https://gist.github.com/navyxliu/62a510a5c6b0245164569745d758935b
 //
-VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields) {
+VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields), _region(nullptr) {
   Compile* C = Compile::current();
   _entries = NEW_ARENA_ARRAY(C->parser_arena(), Node*, nfields);
   // only track explicit stores.
@@ -329,6 +329,7 @@ VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields) {
 VirtualState::VirtualState(const VirtualState& other) {
   _lockCount = other._lockCount;
   _nfields   = other._nfields;
+  _region    = other._region;
   _entries = NEW_ARENA_ARRAY(Compile::current()->parser_arena(), Node*, _nfields);
 
   Node** dst = _entries;
@@ -352,17 +353,44 @@ VirtualState::VirtualState(const VirtualState& other) {
   }
 }
 
-void VirtualState::update_field(int idx, Node* val) {
+void VirtualState::set_field(int idx, Node* val) {
   assert(idx >= 0 && idx < _nfields, "sanity check");
   if (!is_singleton()) {
+    _region = nullptr;
     _diverged.clear();
   }
   _entries[idx] = val;
 }
 
+Node* VirtualState::get_field(int idx, const Type* t, PhaseGVN& gvn) const {
+  assert(idx >= 0 && idx < _nfields, "sanity check");
+
+  Node* m = _entries[idx];
+  if (!is_singleton()) {
+    for (int i = 0 ; i < _diverged.length(); ++i) {
+      VirtualState* vs = _diverged.at(i);
+      if (vs == nullptr || vs == this) continue;
+
+      Node* n = vs->_entries[idx];
+      if (m != n) {
+        if (m == nullptr || !m->is_Phi()) {
+          m = PhiNode::make(_region, m, t);
+          gvn.set_type(m, t);
+        }
+        m->set_req(i, n);
+      }
+    }
+  }
+  return m;
+}
+
 ObjectState& VirtualState::merge(ObjectState& newin, RegionNode* r, int pnum) {
   assert(newin.is_virtual(), "only support VirtualState");
 
+  assert(_region == nullptr || _region == r, "sanity check");
+  if (_region == nullptr) {
+    _region = r;
+  }
   bool identical = true;
   VirtualState* vs = static_cast<VirtualState*>(&newin);
   if (this != &newin) {
@@ -519,18 +547,14 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
 #endif
 
     for (int i = 0; i < ik->nof_nonstatic_fields(); ++i) {
-      Node* val = virt->_entries[i];
       ciField* field = ik->nonstatic_field_at(i);
+      BasicType bt = field->layout_type();
+      const Type* type = Type::get_const_basic_type(bt);
+      Node* val = virt->get_field(i, type, kit->gvn());
 
 #ifndef PRODUCT
       if (Verbose) {
-        tty->print("flt#%2d = ", i);
-        if (val) {
-          val->dump();
-        } else {
-          tty->print("0");
-        }
-        tty->print(" // ");
+        tty->print("flt#%2d: ", i);
         field->print_name_on(tty);
         tty->cr();
       }
@@ -541,10 +565,8 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
       int offset = field->offset_in_bytes();
       Node* adr = kit->basic_plus_adr(objx, objx, offset);
       const TypePtr* adr_type = C->alias_type(field)->adr_type();
-
       DecoratorSet decorators = IN_HEAP;
 
-      BasicType bt = field->layout_type();
       bool is_obj = is_reference_type(bt);
       // Store the value.
       const Type* field_type;
@@ -558,6 +580,20 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
         }
       }
       decorators |= field->is_volatile() ? MO_SEQ_CST : MO_UNORDERED;
+
+      if (val->is_Phi()) {
+        for (uint i = 1; i < val->req(); ++i) {
+          if (val->in(i) == nullptr) {
+            val->set_req(i, kit->zerocon(bt));
+          }
+        }
+      }
+      val = kit->gvn().transform(val);
+#ifndef PRODUCT
+      if (Verbose) {
+        val->dump();
+      }
+#endif
       kit->access_store_at(objx, adr, adr_type, val, field_type, bt, decorators);
     }
   } else {

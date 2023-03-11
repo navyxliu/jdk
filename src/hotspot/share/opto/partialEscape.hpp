@@ -62,6 +62,7 @@ class VirtualState: public ObjectState {
   friend class PEAState;
   int _lockCount;
   int _nfields;
+  RegionNode* _region; // region node when it starts diverging
   Node** _entries;
   GrowableArray<VirtualState*> _diverged; // only record VirtualState with different fields;
 
@@ -81,8 +82,8 @@ class VirtualState: public ObjectState {
     return 0 == _diverged.length();
   }
 
-  void update_field(int idx, Node* val);
-
+  void set_field(int idx, Node* val);
+  Node* get_field(int idx, const Type* type, PhaseGVN& gvn) const;
   ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override;
 };
 
