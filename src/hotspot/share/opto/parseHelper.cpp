@@ -417,6 +417,7 @@ void VirtualState::set_singleton() {
   }
 }
 
+#ifndef PRODUCT
 void VirtualState::print_on(outputStream* os) const {
   os->print_cr("Virt = %p %s", this, singleton() ? "singleton" : "diverged");
 
@@ -430,6 +431,7 @@ void VirtualState::print_on(outputStream* os) const {
     }
   }
 }
+#endif
 
 void PEAState::add_new_allocation(Node* obj) {
   int nfields;

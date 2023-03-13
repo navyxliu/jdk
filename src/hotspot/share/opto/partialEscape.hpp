@@ -86,7 +86,9 @@ class VirtualState: public ObjectState {
   void set_field(int idx, Node* val);
   Node* get_field(int idx, const Type* type, PhaseGVN& gvn) const;
   ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override;
+#ifndef PRODUCT
   void print_on(outputStream* os) const;
+#endif
 };
 
 class EscapedState: public ObjectState {
