@@ -678,7 +678,9 @@ void PEAState::print_on(outputStream* os) const {
     return true;
   });
 }
+#endif
 
+#ifdef ASSERT
 void PEAState::validate() const {
   _state.iterate([&](ObjID obj, ObjectState* state) {
     int cnt = 0;
