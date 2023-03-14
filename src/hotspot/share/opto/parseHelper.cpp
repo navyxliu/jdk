@@ -430,6 +430,20 @@ void VirtualState::print_on(outputStream* os) const {
       os->print_cr(" nil");
     }
   }
+
+  for (int i= 0; i < _diverged.length(); ++i) {
+    VirtualState* pred = _diverged.at(i);
+
+    os->print("%d ", i);
+    if (pred == nullptr) {
+      os->print_cr("_"); // not merged yet.
+    } else if(pred == this) {
+      os->print_cr(" identical");
+    } else {
+      os->print_cr("%p", pred);
+    }
+  }
+
 }
 #endif
 

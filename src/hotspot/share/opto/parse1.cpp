@@ -1692,6 +1692,12 @@ void Parse::handle_missing_successor(int target_bci) {
 void Parse::merge_common(Parse::Block* target, int pnum) {
   if (TraceOptoParse) {
     tty->print("Merging state at block #%d bci:%d", target->rpo(), target->start());
+    if (!target->is_merged()) {
+      tty->print(" with empty state");
+    } else {
+      tty->print(" with previous state");
+    }
+    tty->print_cr(" on path %d", pnum);
   }
 
   // Zap extra stack slots to top
@@ -1699,8 +1705,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
   clean_stack(sp());
 
   if (!target->is_merged()) {   // No prior mapping at this bci
-    if (TraceOptoParse) { tty->print(" with empty state");  }
-
     // If this path is dead, do not bother capturing it as a merge.
     // It is "as if" we had 1 fewer predecessors from the beginning.
     if (stopped()) {
@@ -1748,7 +1752,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     target->state().validate();
 #endif
   } else {                      // Prior mapping at this bci
-    if (TraceOptoParse) {  tty->print(" with previous state"); }
+
 #ifdef ASSERT
     if (target->is_SEL_head()) {
       target->mark_merged_backedge(block());
@@ -1863,6 +1867,12 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
             assert(pred_os->is_virtual(), "sanity check");
             VirtualState* vs = static_cast<VirtualState*>(as.get_object_state(id));
             vs->merge(*pred_os, r, pnum);
+#ifndef PRODUCT
+            if (Verbose) {
+              tty->print_cr("After merge:");
+              vs->print_on(tty);
+            }
+#endif
           }
         }
       }
@@ -1939,10 +1949,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     set_block(save_block);
 
     stop();                     // done with this guy, for now
-  }
-
-  if (TraceOptoParse) {
-    tty->print_cr(" on path %d", pnum);
   }
 
   // Done with this parser state.
