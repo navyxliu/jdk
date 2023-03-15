@@ -32,6 +32,7 @@ class MergeAllVirts {
         // return obj;  we don't materialize at exit. if it's virtual, keep it virtual.
         cached = obj; // materialize here.
     }
+
     static void check_result(boolean cond, int sum) {
         if ((cond && sum != 101) || (!cond && sum != 102)) {
             throw new RuntimeException("wrong answer: " + sum);
