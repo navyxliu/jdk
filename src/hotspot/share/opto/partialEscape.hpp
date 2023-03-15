@@ -28,6 +28,9 @@
 #include "opto/type.hpp"
 #include "utilities/resourceHash.hpp"
 
+// forward declaration
+class GraphKit;
+
 class ObjectState {
   friend class PEAState;
 
@@ -55,16 +58,15 @@ class ObjectState {
 
   int ref_cnt() const { return _refcnt; }
 
-  virtual ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) = 0;
+  virtual ObjectState& merge(ObjectState& newin, GraphKit* kit, const TypeOopPtr* oop_type,
+                             RegionNode* region, int pnum) = 0;
 };
 
 class VirtualState: public ObjectState {
   friend class PEAState;
   int _lockCount;
   int _nfields;
-  RegionNode* _region; // region node when it starts diverging
   Node** _entries;
-  GrowableArray<VirtualState*> _diverged; // only record VirtualState with different fields;
 
  protected:
   VirtualState(const VirtualState& other);
@@ -78,14 +80,13 @@ class VirtualState: public ObjectState {
     return new VirtualState(*this);
   }
 
-  bool singleton() const {
-    return 0 == _diverged.length();
-  }
-  void set_singleton();
-
   void set_field(int idx, Node* val);
-  Node* get_field(int idx, const Type* type, PhaseGVN& gvn) const;
-  ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override;
+  Node* get_field(int idx) const {
+    assert(idx >= 0 && idx < _nfields, "sanity check");
+    return _entries[idx];
+  }
+  ObjectState& merge(ObjectState& newin, GraphKit* kit, const TypeOopPtr* oop_type,
+                     RegionNode* region, int pnum) override;
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif
@@ -102,7 +103,8 @@ class EscapedState: public ObjectState {
   ObjectState* clone() const override {
     return new EscapedState(_materialized);
   }
-  ObjectState& merge(ObjectState& newin, RegionNode* region, int pnum) override {
+  ObjectState& merge(ObjectState& newin,GraphKit* kit, const TypeOopPtr* oop_type,
+                     RegionNode* region, int pnum) override {
     return *this;
   }
 };
@@ -110,9 +112,6 @@ class EscapedState: public ObjectState {
 template<typename K, typename V>
 using PEAMap = ResourceHashtable<K, V, 17, /*table_size*/
                                  AnyObj::C_HEAP, mtCompiler>;
-// forward declaration
-class GraphKit;
-
 using ObjID = AllocateNode*;
 
 class PEAState {
@@ -165,7 +164,6 @@ class PEAState {
   void add_new_allocation(Node* obj);
   EscapedState* materialize(GraphKit* kit, Node* var);
 
-  void reset_virtual_objects();
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif

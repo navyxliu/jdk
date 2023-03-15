@@ -1526,7 +1526,6 @@ void Parse::Block::record_state(Parse* p, int pnum) {
         state.remove_alias(obj, lv);
       }
     }
-    state.reset_virtual_objects();
   }
 }
 
@@ -1865,8 +1864,10 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           if (id != nullptr && as.get_object_state(id)->is_virtual()) {
             ObjectState* pred_os = pred_as.get_object_state(id);
             assert(pred_os->is_virtual(), "sanity check");
+
+            const TypeOopPtr* t = gvn().type(m)->isa_oopptr();
             VirtualState* vs = static_cast<VirtualState*>(as.get_object_state(id));
-            vs->merge(*pred_os, r, pnum);
+            vs->merge(*pred_os, this, t, r, pnum);
 #ifndef PRODUCT
             if (Verbose) {
               tty->print_cr("After merge:");

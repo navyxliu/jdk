@@ -315,7 +315,7 @@ void Parse::dump_map_adr_mem() const {
 // Our adaption to C2.
 // https://gist.github.com/navyxliu/62a510a5c6b0245164569745d758935b
 //
-VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields), _region(nullptr) {
+VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields) {
   Compile* C = Compile::current();
   _entries = NEW_ARENA_ARRAY(C->parser_arena(), Node*, nfields);
   // only track explicit stores.
@@ -329,7 +329,6 @@ VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields), _regi
 VirtualState::VirtualState(const VirtualState& other) {
   _lockCount = other._lockCount;
   _nfields   = other._nfields;
-  _region    = other._region;
   _entries = NEW_ARENA_ARRAY(Compile::current()->parser_arena(), Node*, _nfields);
 
   Node** dst = _entries;
@@ -338,88 +337,57 @@ VirtualState::VirtualState(const VirtualState& other) {
   while (sz-- > 0) {
     *dst++ = *src++;
   }
-
-  int len = other._diverged.length();
-  if (len > 0) {
-    _diverged.at_grow(len-1, nullptr);
-
-    for (int i=0; i < len; ++i) {
-      VirtualState* vs = other._diverged.at(i);
-      if (vs == &other) {
-        vs = this;
-      }
-      _diverged.at_put(i, vs);
-    }
-  }
 }
 
 void VirtualState::set_field(int idx, Node* val) {
   assert(idx >= 0 && idx < _nfields, "sanity check");
-  if (!singleton()) {
-    _region = nullptr;
-    _diverged.clear();
-  }
   _entries[idx] = val;
 }
 
-Node* VirtualState::get_field(int idx, const Type* t, PhaseGVN& gvn) const {
-  assert(idx >= 0 && idx < _nfields, "sanity check");
+ObjectState& VirtualState::merge(ObjectState& newin, GraphKit* kit, const TypeOopPtr* oop_type,
+                                 RegionNode* r, int pnum) {
+  assert(newin.is_virtual(), "only support VirtualState");
+  VirtualState* vs = static_cast<VirtualState*>(&newin);
 
-  Node* m = _entries[idx];
-  if (!singleton()) {
-    for (int i = 0 ; i < _diverged.length(); ++i) {
-      VirtualState* vs = _diverged.at(i);
-      if (vs == nullptr || vs == this) continue;
+  if (this != vs) {
+    ciInstanceKlass* ik = oop_type->is_instptr()->instance_klass();
+    assert(_nfields == ik->nof_nonstatic_fields(), "_nfields should be consistent with instanceKlass");
 
-      Node* n = vs->_entries[idx];
-      if (m != n) {
+    for (int i = 0; i < _nfields; ++i) {
+      Node* m = _entries[i];
+
+      if (m != vs->_entries[i]) {
+        ciField* field = ik->nonstatic_field_at(i);
+        BasicType bt = field->layout_type();
+        const Type* type = Type::get_const_basic_type(bt);
+
         if (m == nullptr || !m->is_Phi()) {
-          m = PhiNode::make(_region, m, t);
-          gvn.set_type(m, t);
+          if (m == nullptr) {
+            m = kit->zerocon(bt);
+          }
+          m = PhiNode::make(r, m, type);
+          kit->gvn().set_type(m, type);
+          _entries[i] = m;
         }
-        m->set_req(i, n);
+
+        Node* n = vs->_entries[i];
+        if (n == nullptr) {
+          n = kit->zerocon(bt);
+        }
+        m->set_req(pnum, n);
+        if (pnum == 1) {
+          _entries[i] = kit->gvn().transform(m);
+        }
       }
     }
   }
-  return m;
-}
 
-ObjectState& VirtualState::merge(ObjectState& newin, RegionNode* r, int pnum) {
-  assert(newin.is_virtual(), "only support VirtualState");
-  assert(_region == nullptr || _region == r, "sanity check");
-
-  if (_region == nullptr) {
-    _region = r;
-  }
-
-  bool identical = true;
-  VirtualState* vs = static_cast<VirtualState*>(&newin);
-  if (this != &newin) {
-    assert(vs->_nfields == _nfields, "sanity check");
-    assert(vs->singleton(), "only support singleton");
-
-    for (int i = 0; identical && i < _nfields; ++i) {
-      identical &= _entries[i] == vs->_entries[i];
-    }
-  }
-
-  if (identical) {
-    vs = this;
-  }
-  _diverged.at_put_grow(pnum, vs, nullptr);
   return *this;
-}
-
-void VirtualState::set_singleton() {
-  if (!singleton()) {
-    _region = nullptr;
-    _diverged.clear();
-  }
 }
 
 #ifndef PRODUCT
 void VirtualState::print_on(outputStream* os) const {
-  os->print_cr("Virt = %p %s", this, singleton() ? "singleton" : "diverged");
+  os->print_cr("Virt = %p", this);
 
   for (int i = 0; i < _nfields; ++i) {
     Node* val = _entries[i];
@@ -427,23 +395,9 @@ void VirtualState::print_on(outputStream* os) const {
     if (val != nullptr) {
       val->dump();
     } else {
-      os->print_cr(" nil");
+      os->print_cr("_");
     }
   }
-
-  for (int i= 0; i < _diverged.length(); ++i) {
-    VirtualState* pred = _diverged.at(i);
-
-    os->print("%d ", i);
-    if (pred == nullptr) {
-      os->print_cr("_"); // not merged yet.
-    } else if(pred == this) {
-      os->print_cr(" identical");
-    } else {
-      os->print_cr("%p", pred);
-    }
-  }
-
 }
 #endif
 
@@ -588,7 +542,7 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
       ciField* field = ik->nonstatic_field_at(i);
       BasicType bt = field->layout_type();
       const Type* type = Type::get_const_basic_type(bt);
-      Node* val = virt->get_field(i, type, kit->gvn());
+      Node* val = virt->get_field(i);
 
 #ifndef PRODUCT
       if (Verbose) {
@@ -619,13 +573,7 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
       }
       decorators |= field->is_volatile() ? MO_SEQ_CST : MO_UNORDERED;
 
-      if (val->is_Phi()) {
-        for (uint i = 1; i < val->req(); ++i) {
-          if (val->in(i) == nullptr) {
-            val->set_req(i, kit->zerocon(bt));
-          }
-        }
-      }
+
       val = kit->gvn().transform(val);
 #ifndef PRODUCT
       if (Verbose) {
@@ -656,16 +604,6 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
   validate();
 #endif
   return escaped;
-}
-
-void PEAState::reset_virtual_objects() {
-  _state.iterate([&](ObjID obj, ObjectState* os) {
-     if (os->is_virtual()) {
-       VirtualState* vs = static_cast<VirtualState*>(os);
-       vs->set_singleton();
-     }
-     return true;
-  });
 }
 
 #ifndef PRODUCT
