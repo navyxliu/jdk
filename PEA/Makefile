@@ -5,7 +5,6 @@ export JAVA_HOME := ${JAVA_PATH}
 export PATH := ${JAVA_HOME}/bin:$(PATH)
 
 CTW_DIR := $(abspath ../test/hotspot/jtreg/testlibrary/ctw)
-CTW_SCRIPT = ${CTW_DIR}/dist/ctw.sh
 CTW_JAVA_OPTIONS := -XX:+CITime -XX:-TieredCompilation -XX:+UseTLAB -XX:+PrintCompilation -XX:+UnlockExperimentalVMOptions -XX:+DoPartialEscapeAnalysis
 
 set_jdk:
@@ -23,13 +22,13 @@ all: set_jdk
 run: set_jdk
 	./auto.sh
 
-$(CTW_SCRIPT):
+build_ctw:
 	${MAKE} -C ${CTW_DIR} all
 
-run-ctw: set_jdk ${CTW_SCRIPT}
+run-ctw: set_jdk build_ctw
 	cd ${CTW_DIR}/dist; \
 	JAVA_OPTIONS="${CTW_JAVA_OPTIONS}" ./ctw.sh modules:java.base
 
-run-ctw-no-inline: set_jdk ${CTW_SCRIPT}
+run-ctw-no-inline: set_jdk build_ctw
 	cd ${CTW_DIR}/dist; \
 	JAVA_OPTIONS="${CTW_JAVA_OPTIONS} -XX:-Inline" ./ctw.sh modules:java.base
