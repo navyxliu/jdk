@@ -1799,7 +1799,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
     // from right to left, we update ctrl, I_O and memory til the last minute
     // because PEA materialization may change them.
-    for (uint j = newin->req()-1; j >= 1; --j) {
+    for (uint j = 1; j < newin->req(); j++) {
       Node* m = map()->in(j);   // Current state of target.
       Node* n = newin->in(j);   // Incoming change to target state.
       PhiNode* phi;
@@ -1845,7 +1845,14 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
                       // materialize 'm' because it has been materialized in save_block.
                       assert(pred_os->get_materialized_value() == n, "sanity: materialized value in save_block is n");
                       as.add_alias(id, m);
-                      Node* mv = ensure_object_materialized(m, as, map(), r, block()->init_pnum());
+
+                      GrowableArray<int> set(phi->req());
+                      for (uint i = 1; i < phi->req(); ++i) {
+                        if (phi->in(i) == m && i != (uint)pnum) {
+                          set.push(i);
+                        }
+                      }
+                      Node* mv = ensure_object_materialized(phi, m, as, r, set);
                       phi->replace_edge(m, mv);
                       as.update(id, new EscapedState(phi));
                     } else {
@@ -1897,7 +1904,9 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
             if (pred_as.contains(id)) {
               // id are in both AS and PRED_AS
               if (!as.get_object_state(id)->is_virtual() && pred_as.get_object_state(id)->is_virtual()) {
-                n = ensure_object_materialized(n, pred_as, newin, r, pnum);
+                GrowableArray<int> set(1);
+                set.push(pnum);
+                n = ensure_object_materialized(phi, n, pred_as, r, set);
               } else if (as.get_object_state(id)->is_virtual() && !pred_as.get_object_state(id)->is_virtual()) {
                 // TODO: materailize all.
                 assert(false, "not implement yet");
@@ -2202,51 +2211,67 @@ PhiNode *Parse::ensure_memory_phi(int idx, bool nocreate) {
   return phi;
 }
 
-// Passive Materialization
-// ------------------------
-// C2 has to materialize a virtual object at the merging point because the object has been materialized in
-// any other predecessor. For instance:
-//
-// obj(virtual)     obj(materialized)
-//              \      /
-// Reion(,c1,c2) |    |
-//      \        |    |
-//       \c      |    |
-//   o3 = Phi   (o1, o2)
-//
-// Node* var is o1;
-// r[pnum] is c1;
-//
-// There are 2 cases:
-// 1) materialize m from map().
-// 2) materialize n from newin.
-// so from_map is either from current map or newin of merge_common().
-// for case 1, the control of from_map is Region, so we need to adjust it to c1.
-//
-// Regarding compile-time state, We also need to consider ABIO(in(1)) and Memory(in(2)) of from_map.
-// we reverse the iteration order in merge_common(). For the time being, we haven't merged ABIO and Memory yet.
-// I.e. we use (Ctrl, ABIO, Memory) of from_map before merging.
-//
-Node* Parse::ensure_object_materialized(Node* var, PEAState& state, SafePointNode* from_map, RegionNode* r, int pnum) {
-  GraphKit kit(from_map->jvms());
-  bool update_ctrl = from_map == map();
+SafePointNode* Parse::find_block_map(RegionNode* region) {
+  SafePointNode* map = nullptr;
 
-  if (update_ctrl) {
-    assert(kit.control() == r, "sanity");
-    kit.set_control(r->in(pnum));
-  } else {
-    assert(kit.control() == r->in(pnum), "sanity");
+  for (DUIterator_Fast imax, i = region->fast_outs(imax); i < imax; i++) {
+    Node* use = region->fast_out(i);
+    if (use->Opcode() == Op_SafePoint) {
+      assert(map == nullptr, "found more than one.");
+      assert(map->outcnt() == 0, "map must be a useless Node");
+      map = use->as_SafePoint();
+    }
+  }
+  assert(map == nullptr, "map is not found");
+  return map;
+}
+
+Node* Parse::ensure_object_materialized(PhiNode* phi, Node* var, const PEAState& state, RegionNode* region, const GrowableArray<int>& paths) {
+  ObjID alloc = state.is_alias(var);
+  assert(alloc != nullptr, "sanity check");
+  ObjectState* os = state.get_object_state(alloc);
+  assert(os->is_virtual(), "materialize a virtual object");
+  const int len = region->req();
+
+  // tetris search
+
+  // not found
+  RegionNode* r = RegionNode::make_shim();
+  gvn().set_type(r, Type::CONTROL);
+#if 0
+  SafePointNode* m = new SafePointNode(5, new (C) JVMState(0));
+  m->set_req(TypeFunc::Control, r);
+  m->set_req(TypeFunc::I_O, i_o());
+  Node* mem = reset_memory();
+  set_all_memory(mem);
+  m->set_req(TypeFunc::Memory, mem);
+  m->set_req(TypeFunc::FramePtr, frameptr());
+  m->set_req(TypeFunc::ReturnAdr, returnadr());
+  PEAState& as = m->jvms()->alloc_state(); // a clear slate
+  as.update(alloc, os->clone());
+  as.add_alias(alloc, var);
+  as.validate();
+#endif
+  // A new layer: paths go region r and others belong to filler.
+  for (int i = 0; i < paths.length(); ++i) {
+    int pnum = paths.at(i);
+    r->add_req(region->in(pnum));
+    region->set_req(pnum, r);
   }
 
-  EscapedState* es = state.materialize(&kit, var);
-  Node* mv = es->get_materialized_value();
-  assert(kit.control() == mv->in(0), "sanity");
-  r->set_req(pnum, mv->in(0));
-
-  if (update_ctrl) {
-    kit.set_control(r);
+  RegionNode* filler = nullptr;
+  for (int i = 1; i < len; ++i) {
+    Node* in = region->in(i);
+    if (in == r || in == nullptr) continue;
+    if (filler == nullptr) {
+      filler = RegionNode::make_shim();
+      gvn().set_type(filler, Type::CONTROL);
+    }
+    filler->add_req(in);
+    region->set_req(i, filler);
   }
-  return mv;
+
+  return var;
 }
 
 //------------------------------call_register_finalizer-----------------------

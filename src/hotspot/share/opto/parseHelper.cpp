@@ -315,7 +315,7 @@ void Parse::dump_map_adr_mem() const {
 // Our adaption to C2.
 // https://gist.github.com/navyxliu/62a510a5c6b0245164569745d758935b
 //
-VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields) {
+VirtualState::VirtualState(int nfields): _lockcnt(0), _nfields(nfields) {
   Compile* C = Compile::current();
   _entries = NEW_ARENA_ARRAY(C->parser_arena(), Node*, nfields);
   // only track explicit stores.
@@ -327,7 +327,7 @@ VirtualState::VirtualState(int nfields): _lockCount(0), _nfields(nfields) {
 
 // do NOT call base's copy constructor. we would like to reset refcnt!
 VirtualState::VirtualState(const VirtualState& other) {
-  _lockCount = other._lockCount;
+  _lockcnt = other._lockcnt;
   _nfields   = other._nfields;
   _entries = NEW_ARENA_ARRAY(Compile::current()->parser_arena(), Node*, _nfields);
 
@@ -342,6 +342,17 @@ VirtualState::VirtualState(const VirtualState& other) {
 void VirtualState::set_field(int idx, Node* val) {
   assert(idx >= 0 && idx < _nfields, "sanity check");
   _entries[idx] = val;
+}
+
+bool VirtualState::equals(const VirtualState* vs) const {
+  if (_nfields == vs->_nfields && _lockcnt == vs->_lockcnt) {
+    for (int i = 0; i < _nfields; ++i) {
+      if (_entries[i] != vs->_entries[i]) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 ObjectState& VirtualState::merge(ObjectState& newin, GraphKit* kit, const TypeOopPtr* oop_type,
@@ -580,7 +591,6 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
         }
       }
       decorators |= field->is_volatile() ? MO_SEQ_CST : MO_UNORDERED;
-
 
       val = kit->gvn().transform(val);
 #ifndef PRODUCT

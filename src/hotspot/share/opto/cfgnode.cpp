@@ -571,20 +571,43 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
       uint max = outcnt();
       DUIterator j;
       bool progress = true;
-      while(progress) {         // Need to establish property over all users
+      bool shim = is_shim();
+      auto set_req_null = [&](Node* n, uint idx) {
+        igvn->hash_delete(n); // Yank from hash before hacking edges
+        n->set_req_X(idx, nullptr, igvn);// Correct DU info
+
+        if(max != outcnt()) {
+          progress = true;
+          j = refresh_out_pos(j);
+          max = outcnt();
+        }
+      };
+
+      while (progress) {         // Need to establish property over all users
         progress = false;
         for (j = outs(); has_out(j); j++) {
           Node *n = out(j);
           if( n->req() != req() && n->is_Phi() ) {
             assert( n->in(0) == this, "" );
-            igvn->hash_delete(n); // Yank from hash before hacking edges
-            n->set_req_X(i,nullptr,igvn);// Correct DU info
-            n->del_req(i);        // Yank path from Phis
-            if( max != outcnt() ) {
-              progress = true;
-              j = refresh_out_pos(j);
-              max = outcnt();
+            set_req_null(n, i);
+            n->del_req(i); // Yank path from Phis
+          } else if (shim && n->is_Region() && n != this) { // only one region in shim's outs.
+            uint occ = 0;
+            uint idx = 1;
+
+            while (occ < i && idx < n->req()) {
+              if (n->in(idx) == this) {
+                occ++;
+              }
+              ++idx;
             }
+            assert(occ == i, "No input for a shim region");
+            set_req_null(n, idx-1);
+            // add n to the worklist because:
+            // 1. n itself may be a shim.
+            // 2. we need to check n's phis.
+            igvn->add_users_to_worklist(n);
+            shim = false;
           }
         }
       }
@@ -990,6 +1013,12 @@ bool RegionNode::optimize_trichotomy(PhaseIterGVN* igvn) {
 
 const RegMask &RegionNode::out_RegMask() const {
   return RegMask::Empty;
+}
+
+RegionNode* RegionNode::make_shim() {
+  RegionNode* r = new RegionNode(1);
+  r->_shim = true;
+  return r;
 }
 
 #ifndef PRODUCT

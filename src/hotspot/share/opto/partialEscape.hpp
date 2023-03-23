@@ -64,7 +64,7 @@ class ObjectState {
 
 class VirtualState: public ObjectState {
   friend class PEAState;
-  int _lockCount;
+  int _lockcnt;
   int _nfields;
   Node** _entries;
 
@@ -87,6 +87,7 @@ class VirtualState: public ObjectState {
   }
   ObjectState& merge(ObjectState& newin, GraphKit* kit, const TypeOopPtr* oop_type,
                      RegionNode* region, int pnum) override;
+  bool equals(const VirtualState* vs) const;
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif
@@ -103,6 +104,7 @@ class EscapedState: public ObjectState {
   ObjectState* clone() const override {
     return new EscapedState(_materialized);
   }
+
   ObjectState& merge(ObjectState& newin,GraphKit* kit, const TypeOopPtr* oop_type,
                      RegionNode* region, int pnum) override {
     return *this;
@@ -145,6 +147,7 @@ class PEAState {
 
   void update(ObjID id, ObjectState* os) {
     if (contains(id)) {
+      // copy the refcnt from older state.
       os->ref_cnt(get_object_state(id)->ref_cnt());
     }
     _state.put(id, os);
@@ -170,6 +173,8 @@ class PEAState {
 
 #ifdef ASSERT
   void validate() const;
+#else
+  void validate() const {}
 #endif
 };
 

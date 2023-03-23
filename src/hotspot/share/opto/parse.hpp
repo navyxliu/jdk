@@ -446,6 +446,8 @@ class Parse : public GraphKit {
 
   void set_block(Block* b)            { _block = b; }
 
+  static SafePointNode* find_block_map(RegionNode* region);
+
   // Derived accessors:
   bool is_normal_parse() const  { return _entry_bci == InvocationEntryBci; }
   bool is_osr_parse() const     { return _entry_bci != InvocationEntryBci; }
@@ -512,8 +514,33 @@ class Parse : public GraphKit {
   // Helper functions for merging individual cells.
   PhiNode *ensure_phi(       int idx, bool nocreate = false);
   PhiNode *ensure_memory_phi(int idx, bool nocreate = false);
-  // materialize object ID
-  Node* ensure_object_materialized(Node* var, PEAState& state, SafePointNode* map, RegionNode* r, int pnum);
+  //
+  // passive materialization
+  // ------------------------
+  // Turn all apperances of var in phi to materialized.
+  // If we can find a region', whose allocation state match state[#var], we use it.
+  // otherwise, we create a branch new region. A new Region' for materialization.
+  // A SafePointNode' associated with the new reagion saves ABIO and MergedMemory after materialization.
+  // The Merged Allocation State is stored in SafePointNode' as well.
+  //
+  // Filler is an identity region. It takes the unchanged inputs and form a layer with Region'.
+  //
+  // +------++---------+
+  // |filler|| Region' |
+  // +------++---------+
+  //   | |    | |  | |
+  //   | |    | |  |  ----------------------------c-------+
+  //   | |    | |   ----------c-----------+       | SFPT' |
+  // +-----------+            | Mat(var)  |       +-------+
+  // | Region    |            +-----------+
+  // +-----------+               | |
+  //  |       |                  | |
+  //  |        -------------c---------+
+  //  c------+              | PHI     |
+  //  | SFPT |              +---------+
+  //  +------+
+  Node* ensure_object_materialized(PhiNode* phi, Node* var, const PEAState& state, RegionNode* region,
+                                   const GrowableArray<int>& paths);
 
   // Helper to merge the current memory state into the given basic block
   void merge_memory_edges(MergeMemNode* n, int pnum, bool nophi);
