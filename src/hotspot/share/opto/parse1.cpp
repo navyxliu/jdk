@@ -2233,6 +2233,7 @@ Node* Parse::ensure_object_materialized(PhiNode* phi, Node* var, const PEAState&
   assert(os->is_virtual(), "materialize a virtual object");
   const int len = region->req();
 
+  assert(phi->in(0) == region, "");
   // tetris search
 
   // not found
@@ -2252,25 +2253,13 @@ Node* Parse::ensure_object_materialized(PhiNode* phi, Node* var, const PEAState&
   as.add_alias(alloc, var);
   as.validate();
 #endif
-  // A new layer: paths go region r and others belong to filler.
+
+  // r will cover paths.
   for (int i = 0; i < paths.length(); ++i) {
     int pnum = paths.at(i);
     r->add_req(region->in(pnum));
     region->set_req(pnum, r);
   }
-
-  RegionNode* filler = nullptr;
-  for (int i = 1; i < len; ++i) {
-    Node* in = region->in(i);
-    if (in == r || in == nullptr) continue;
-    if (filler == nullptr) {
-      filler = RegionNode::make_shim();
-      gvn().set_type(filler, Type::CONTROL);
-    }
-    filler->add_req(in);
-    region->set_req(i, filler);
-  }
-
   return var;
 }
 

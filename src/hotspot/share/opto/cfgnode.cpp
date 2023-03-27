@@ -490,6 +490,33 @@ bool RegionNode::try_clean_mem_phi(PhaseGVN *phase) {
   return false;
 }
 
+class NodeChanger : public StackObj {
+  PhaseIterGVN* _igvn;
+  Node*         _node;
+  bool          _changed = false;
+
+public:
+  NodeChanger(PhaseIterGVN* igvn, Node* node) : _igvn(igvn), _node(node) {
+    assert(_igvn != nullptr, "only used this when can_reshape is true");
+  }
+  void del_req(uint idx) {
+    if (!_changed) {
+      _igvn->rehash_node_delayed(_node);
+      _changed = true;
+    }
+    _node->set_req_X(idx, nullptr, _igvn);
+    _node->del_req(idx);
+  }
+
+  void set_req(uint idx, Node* n) {
+    if (!_changed) {
+      _igvn->rehash_node_delayed(_node);
+      _changed = true;
+    }
+    _node->set_req_X(idx, n, _igvn);
+  }
+};
+
 //------------------------------Ideal------------------------------------------
 // Return a node which is more "ideal" than the current node.  Must preserve
 // the CFG, but we can still strip out dead paths.
@@ -524,6 +551,95 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
           }
         }
       }
+    }
+
+    if (_shim) {
+      GrowableArray<uint> paths;
+      Node* out = nullptr;
+      PhaseIterGVN *igvn = phase->is_IterGVN();
+
+      for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
+        Node* n = fast_out(i);
+        if (n == this) continue;
+        else if (n->is_Region()) {
+          assert(out == nullptr || out == n, "only support single layer");
+          out = n;
+        }
+      }
+      assert(out != nullptr, "must have a region in outs");
+      for (uint i = 1; i < out->req(); ++i) {
+        if (out->in(i) == this) {
+          paths.push(i);
+        }
+      }
+
+      if (paths.length() > 1) {
+        // if the shim covers multiple paths, we need to squeeze outs.
+        // shim region is incompabile with Cliff's GCM(in neither LoopOpts nor CodeGen)
+        //
+        //   | |
+        // +-----------+
+        // | this(shim)|
+        // +-----------+
+        //   | |
+        // +------+
+        // | out  |
+        // +------+
+        //    |
+        //    +-------+-------+
+        //            | phi   |
+        //            +-------+
+        //
+        // After simplification
+        //   | |
+        // +--------+
+        // | this   |
+        // +--------+
+        //   |   |
+        //   |   +----+-------+
+        //   |        | phi   |
+        //   |        +-------+
+        // +------+
+        // | out  |
+        // +------+
+        //
+        // paths are the inputs of out. we keep input #paths[0]. other inputs are deleted in reverse order.
+        for (DUIterator_Fast imax, i = out->fast_outs(imax); i < imax; i++) {
+          Node* phi = out->fast_out(i);
+
+          if (phi != nullptr && phi->is_Phi()) {
+            uint idx = paths.at(0);
+            Node* m = phi->in(idx);
+            const Type* type = phase->type(phi);
+            NodeChanger changer(igvn, phi);
+
+            for (int j = paths.length()-1; j >= 1; --j) {
+              idx = paths.at(j);
+              Node* n = phi->in(idx);
+              if (m != n) {
+                if (m == nullptr || !m->is_Phi()) {
+                  m = PhiNode::make(this, m, type, phi->adr_type());
+                  phase->set_type(m, type);
+                }
+                m->set_req(j + 1, n);
+              }
+              changer.del_req(idx);
+            }
+            idx = paths.at(0);
+            if (phi->in(idx) != m) {
+              changer.set_req(idx, m);
+            }
+          }
+        }
+
+        NodeChanger nc(igvn, out);
+        for (int j = paths.length()-1; j >= 1; --j) {
+          int idx = paths.at(j);
+          nc.del_req(idx);
+        }
+      }
+      _shim = false;
+      return this; // record progress
     }
   }
 
@@ -571,43 +687,20 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
       uint max = outcnt();
       DUIterator j;
       bool progress = true;
-      bool shim = is_shim();
-      auto set_req_null = [&](Node* n, uint idx) {
-        igvn->hash_delete(n); // Yank from hash before hacking edges
-        n->set_req_X(idx, nullptr, igvn);// Correct DU info
-
-        if(max != outcnt()) {
-          progress = true;
-          j = refresh_out_pos(j);
-          max = outcnt();
-        }
-      };
-
-      while (progress) {         // Need to establish property over all users
+      while(progress) {         // Need to establish property over all users
         progress = false;
         for (j = outs(); has_out(j); j++) {
           Node *n = out(j);
           if( n->req() != req() && n->is_Phi() ) {
             assert( n->in(0) == this, "" );
-            set_req_null(n, i);
-            n->del_req(i); // Yank path from Phis
-          } else if (shim && n->is_Region() && n != this) { // only one region in shim's outs.
-            uint occ = 0;
-            uint idx = 1;
-
-            while (occ < i && idx < n->req()) {
-              if (n->in(idx) == this) {
-                occ++;
-              }
-              ++idx;
+            igvn->hash_delete(n); // Yank from hash before hacking edges
+            n->set_req_X(i,nullptr,igvn);// Correct DU info
+            n->del_req(i);        // Yank path from Phis
+            if( max != outcnt() ) {
+              progress = true;
+              j = refresh_out_pos(j);
+              max = outcnt();
             }
-            assert(occ == i, "No input for a shim region");
-            set_req_null(n, idx-1);
-            // add n to the worklist because:
-            // 1. n itself may be a shim.
-            // 2. we need to check n's phis.
-            igvn->add_users_to_worklist(n);
-            shim = false;
           }
         }
       }
@@ -1033,6 +1126,10 @@ void RegionNode::dump_spec(outputStream* st) const {
     break;
   case RegionNode::LoopStatus::NeverIrreducibleEntry:
     break; // nothing
+  }
+
+  if (_shim) {
+    st->print("[shim]");
   }
 }
 #endif

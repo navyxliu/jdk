@@ -515,19 +515,22 @@ class Parse : public GraphKit {
   PhiNode *ensure_phi(       int idx, bool nocreate = false);
   PhiNode *ensure_memory_phi(int idx, bool nocreate = false);
   //
-  // passive materialization
+  // Passive materialization
   // ------------------------
   // Turn all apperances of var in phi to materialized.
-  // If we can find a region', whose allocation state match state[#var], we use it.
-  // otherwise, we create a branch new region. A new Region' for materialization.
+  // If we can find a shim region, whose allocation state match state[#var], we use it.
+  // Otherwise, we create a branch new shim for materialization. A shim is a isomorphic region, or same in, same out.
+  // Cliff's GCM doesn't regcongize shims in neither LoopOpts and Codegen, Therefore, we cover all shims to ordinary
+  // regions in IterGVN, see Region::Ideal.
+  //
   // A SafePointNode' associated with the new reagion saves ABIO and MergedMemory after materialization.
   // The Merged Allocation State is stored in SafePointNode' as well.
   //
-  // Filler is an identity region. It takes the unchanged inputs and form a layer with Region'.
   //
-  // +------++---------+
-  // |filler|| Region' |
-  // +------++---------+
+  //   | |    | |
+  //   | |  +---------+
+  //   | |  | Shim    |
+  //   | |  +---------+
   //   | |    | |  | |
   //   | |    | |  |  ----------------------------c-------+
   //   | |    | |   ----------c-----------+       | SFPT' |
