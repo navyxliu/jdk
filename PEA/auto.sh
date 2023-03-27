@@ -7,7 +7,7 @@ java --version
 
 for t in run*.sh
 do
-    ./$t $JVM_FLAGS > $t.log
+    sh ./$t $JVM_FLAGS > $t.log
 
     exitcode=$?
     if [ $exitcode -eq 0 ] || [ $exitcode -eq 3 ];  then
