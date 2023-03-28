@@ -53,7 +53,8 @@ EXPORTS=--add-exports java.base/jdk.internal.jimage=ALL-UNNAMED \
 	--add-exports java.base/jdk.internal.reflect=ALL-UNNAMED \
 	--add-exports java.base/jdk.internal.access=ALL-UNNAMED
 
-MAIN_CLASS = sun.hotspot.tools.ctw.CompileTheWorld
+CTW_MAIN_CLASS = sun.hotspot.tools.ctw.CompileTheWorld
+CTWRUNNER_MAIN_CLASS = sun.hotspot.tools.ctw.CtwRunner
 
 .PHONY: clean cleantmp
 
@@ -73,10 +74,20 @@ $(DST_DIR)/ctw.sh: $(DST_DIR)
 	echo '$${JAVA_HOME}/bin/java $${JAVA_OPTIONS} $(EXPORTS) -XX:-UseCounterDecay -Xbatch "-XX:CompileCommand=exclude,java/lang/invoke/MethodHandle.*" -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -Xbootclasspath/a:wb.jar -jar ctw.jar $$@' > $@
 	chmod a+x $@
 
+$(DST_DIR)/ctwrunner.sh: $(DST_DIR)
+	echo '$${JAVA_HOME}/bin/java $${JAVA_OPTIONS} -Dtest.jdk=$${JAVA_HOME} -jar ctwrunner.jar $$@' > $@
+	chmod a+x $@
+
 $(DST_DIR)/ctw.jar: filelist $(DST_DIR)/wb.jar
 	@mkdir -p $(OUTPUT_DIR)
 	$(JAVAC) $(EXPORTS) -sourcepath $(SRC_DIR) -d $(OUTPUT_DIR) -cp $(DST_DIR)/wb.jar @filelist
-	$(JAR) --create --file=$@ --main-class $(MAIN_CLASS) -C $(OUTPUT_DIR) .
+	$(JAR) --create --file=$@ --main-class $(CTW_MAIN_CLASS) -C $(OUTPUT_DIR) .
+	@rm -rf $(OUTPUT_DIR)
+
+$(DST_DIR)/ctwrunner.jar: filelist $(DST_DIR)/wb.jar
+	@mkdir -p $(OUTPUT_DIR)
+	$(JAVAC) $(EXPORTS) -sourcepath $(SRC_DIR) -d $(OUTPUT_DIR) -cp $(DST_DIR)/wb.jar @filelist
+	$(JAR) --create --file=$@ --main-class $(CTWRUNNER_MAIN_CLASS) -C $(OUTPUT_DIR) .
 	@rm -rf $(OUTPUT_DIR)
 
 $(DST_DIR)/wb.jar: wb_filelist $(DST_DIR)
@@ -88,7 +99,7 @@ $(DST_DIR)/wb.jar: wb_filelist $(DST_DIR)
 	$(JAR) --create --file=$@ -C $(OUTPUT_DIR) .
 	@rm -rf $(OUTPUT_DIR)
 
-$(DST_DIR)/ctw.zip: $(DST_DIR)/ctw.sh $(DST_DIR)/wb.jar $(DST_DIR)/ctw.jar
+$(DST_DIR)/ctw.zip: $(DST_DIR)/ctw.sh $(DST_DIR)/ctwrunner.sh $(DST_DIR)/wb.jar $(DST_DIR)/ctw.jar $(DST_DIR)/ctwrunner.jar
 	zip -j $@ $?
 
 wb_filelist: $(WB_SRC_FILES)
