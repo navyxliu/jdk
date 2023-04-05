@@ -680,27 +680,27 @@ void PEAState::validate() const {
 }
 #endif
 
-MergeProcessor::MergeProcessor(PEAState& target) : _state(target) {
+void PEAState::aliases(Unique_Node_List& nodes) const {
+  _alias.iterate([&](Node* alias, ObjID obj){
+                   nodes.push(alias);
+                   return true;
+                 });
 }
-void MergeProcessor::merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
-  // intersection of two aliases
-  Unique_Node_List alias1;
-  Unique_Node_List alias2;
 
-  _state.aliases()->iterate([&](Node* alias, ObjID obj) {
-                             alias1.push(alias);
-                             return true;
-                           });
-  newin.aliases()->iterate([&](Node* alias, ObjID obj) {
-                            alias2.push(alias);
-                            return true;
-                          });
-  VectorSet set = alias1.member_set();
-  set &= alias2.member_set();
-  alias1.remove_useless_nodes(set);
+AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
 
-  for (uint i = 0; i < alias1.size(); ++i) {
-    Node* var = alias1.at(i);
+void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
+  Unique_Node_List set1, set2;
+
+  _state.aliases(set1);
+  newin.aliases(set2);
+
+  VectorSet intersection = set1.member_set();
+  intersection &= set2.member_set();
+  set1.remove_useless_nodes(intersection);
+
+  for (uint i = 0; i < set1.size(); ++i) {
+    Node* var = set1.at(i);
     VirtualState* vs1 = _state.as_virtual(var);
     VirtualState* vs2 = newin.as_virtual(var);
     if (vs1 != nullptr && vs2 != nullptr) {
@@ -709,9 +709,8 @@ void MergeProcessor::merge(const PEAState& newin, GraphKit* kit, RegionNode* reg
   }
 }
 
-MergeProcessor::~MergeProcessor() {
-
+AllocationStateMerger::~AllocationStateMerger() {
 }
 
-void MergeProcessor::process_phi(PhiNode* phi) {
+void AllocationStateMerger::process_phi(PhiNode* phi, Node* old) {
 }

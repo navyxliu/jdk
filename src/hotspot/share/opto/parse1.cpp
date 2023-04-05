@@ -1802,9 +1802,9 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     bool check_elide_phi = target->is_SEL_backedge(save_block);
     PEAState& pred_as = newin->jvms()->alloc_state();
     PEAState& as = block()->state();
-    MergeProcessor mp(as);
+    AllocationStateMerger as_merger(as);
     if (DoPartialEscapeAnalysis) {
-      mp.merge(pred_as, this, r, pnum);
+      as_merger.merge(pred_as, this, r, pnum);
     }
 
     for (uint j = 1; j < newin->req(); ++j) {

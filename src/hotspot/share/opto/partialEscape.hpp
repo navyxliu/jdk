@@ -104,7 +104,7 @@ class EscapedState: public ObjectState {
   ObjectState* clone() const override {
     return new EscapedState(_materialized);
   }
-  ObjectState& merge(ObjectState* newin,GraphKit* kit, RegionNode* region, int pnum) override {
+  ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) override {
     return *this;
   }
 };
@@ -164,9 +164,7 @@ class PEAState {
   void add_new_allocation(Node* obj);
   EscapedState* materialize(GraphKit* kit, Node* var);
 
-  const PEAMap<Node*, ObjID>* aliases() const {
-    return &_alias;
-  }
+  void aliases(Unique_Node_List& nodes) const;
 
   VirtualState* as_virtual(Node* var) const {
     ObjID id = is_alias(var);
@@ -189,15 +187,15 @@ class PEAState {
 #endif
 };
 
-class MergeProcessor {
+class AllocationStateMerger {
  private:
   GrowableArray<ObjID> _live; // live objects
-  PEAState& _state; //
+  PEAState& _state;
 
  public:
-  MergeProcessor(PEAState& target);
-  ~MergeProcessor(); // purge all objects which are not in live.
+  AllocationStateMerger(PEAState& target);
+  ~AllocationStateMerger(); // purge all objects which are not in live.
   void merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
-  void process_phi(PhiNode* phi);
+  void process_phi(PhiNode* phi, Node* old);
 };
 #endif // SHARE_OPTO_PARTIAL_ESCAPE_HPP
