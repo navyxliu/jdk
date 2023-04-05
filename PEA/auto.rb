@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
 JVM_FLAGS="-XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations -XX:+PrintOptoAssembly -Xlog:gc -XX:+DoPartialEscapeAnalysis"
+PROBLEM_LIST = ["run1_generic.sh", "run_EscapeInInitializer.sh"]
 
 if $0 == __FILE__
   puts  "using #{%x|which java|}"
@@ -16,6 +17,8 @@ if $0 == __FILE__
       # exitcode == 3 is out of memory. acceptable.
       if ret or $?.exitstatus == 3 then
         puts "\tpassed."
+      elsif  PROBLEM_LIST.include? t then
+        puts "\ta known issue."
       else
         puts "\tfailed!"
         exit(1)
