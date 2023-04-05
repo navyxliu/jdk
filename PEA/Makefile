@@ -21,7 +21,7 @@ all: set_jdk
 	javac *.java
 
 run: set_jdk
-	./auto.sh
+	./auto.rb
 
 $(CTW_SCRIPT):
 	${MAKE} -C ${CTW_DIR} all
