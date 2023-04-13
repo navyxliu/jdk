@@ -704,12 +704,14 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
     VirtualState* vs1 = _state.as_virtual(var);
     VirtualState* vs2 = newin.as_virtual(var);
     if (vs1 != nullptr && vs2 != nullptr) {
+#ifndef PRODUCT
       if (Verbose) {
         tty->print("merge vs1 = ");
         vs1->print_on(tty);
         tty->print("and vs2 = ");
         vs2->print_on(tty);
       }
+#endif
       vs1->merge(vs2, kit, region, pnum);
     }
   }
