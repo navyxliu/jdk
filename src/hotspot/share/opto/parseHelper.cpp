@@ -363,6 +363,12 @@ void VirtualState::set_field(ciField* field, Node* val) {
   ShouldNotReachHere();
 }
 
+static void ensure_phi(PhiNode* phi, uint pnum) {
+    while (phi->req() <= pnum) {
+      phi->add_req(nullptr);
+    }
+}
+
 ObjectState& VirtualState::merge(ObjectState* newin, GraphKit* kit, RegionNode* r, int pnum) {
   assert(newin->is_virtual(), "only support VirtualState");
 
@@ -392,6 +398,7 @@ ObjectState& VirtualState::merge(ObjectState* newin, GraphKit* kit, RegionNode* 
         if (n == nullptr) {
           n = kit->zerocon(bt);
         }
+        ensure_phi(m->as_Phi(), pnum);
         m->set_req(pnum, n);
         if (pnum == 1) {
           _entries[i] = kit->gvn().transform(m);
