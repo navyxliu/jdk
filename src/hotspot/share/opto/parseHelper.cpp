@@ -575,8 +575,6 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
       }
       decorators |= field->is_volatile() ? MO_SEQ_CST : MO_UNORDERED;
 
-
-      val = kit->gvn().transform(val);
 #ifndef PRODUCT
       if (Verbose) {
         val->dump();
@@ -716,6 +714,7 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
       Node* m = _state.get_cooked_oop(obj);
       Node* n = newin.get_cooked_oop(obj);
       if (m->is_Phi() && m->in(0) == region) {
+        ensure_phi(m->as_Phi(), pnum);
         // only update the pnum that we have never seen before.
         if (m->in(pnum) == nullptr) {
           m->set_req(pnum, n);
