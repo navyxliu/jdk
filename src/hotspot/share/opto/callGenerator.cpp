@@ -107,6 +107,7 @@ JVMState* ParseGenerator::generate(JVMState* jvms) {
 
   assert(exits.jvms()->same_calls_as(jvms), "sanity");
 
+#ifndef PRODUCT
   if (PEAVerbose) {
     for (uint i = 0; i < jvms->depth(); ++i) {
       tty->print("..");
@@ -138,6 +139,7 @@ JVMState* ParseGenerator::generate(JVMState* jvms) {
       }
     }
   }
+#endif
   // Simply return the exit state of the parser,
   // augmented by any exceptional states.
   return exits.transfer_exceptions_into_jvms();
