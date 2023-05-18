@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-JVM_FLAGS="-XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations -XX:+PrintOptoAssembly -Xlog:gc -XX:+DoPartialEscapeAnalysis"
+JVM_FLAGS="-XX:+PrintEscapeAnalysis -XX:+PrintEliminateAllocations -XX:+PrintOptoAssembly -Xlog:gc -XX:+PrintOptoStatistics -XX:+DoPartialEscapeAnalysis"
 PROBLEM_LIST = ["run1_generic.sh"]
 
 if $0 == __FILE__
