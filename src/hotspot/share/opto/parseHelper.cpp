@@ -676,10 +676,10 @@ void PEAState::validate() const {
 }
 #endif
 
+// get the key set from _state. we stop maintaining aliases for the materialized objects.
 int PEAState::objects(Unique_Node_List& nodes) const {
-  _alias.iterate([&](Node* alias, ObjID obj){
-                   nodes.push(obj);
-                   return true;
+  _state.iterate([&](ObjID obj, ObjectState* state) {
+                   nodes.push(obj); return true;
                  });
   return nodes.size();
 }
@@ -745,6 +745,7 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
         const Type* type = obj->oop_type(kit->gvn());
         Node* phi = PhiNode::make(region, m, type);
         phi->set_req(pnum, n);
+        kit->gvn().set_type(phi, type);
         if (os1->is_virtual()) {
           _state.remove_alias(obj, m);
           _state.update(obj, new EscapedState(phi));
