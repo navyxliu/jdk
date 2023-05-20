@@ -1084,7 +1084,7 @@ void Parse::do_exits() {
 
       if (DoEscapeAnalysis && alloc != nullptr) {
         alloc->compute_MemBar_redundancy(method());
-        set_allocation_MemBar_redundancy(obj, alloc->is_allocation_MemBar_redundant());
+        //set_allocation_MemBar_redundancy(obj, alloc->is_allocation_MemBar_redundant());
       }
     }
     if (PrintOpto && (Verbose || WizardMode)) {

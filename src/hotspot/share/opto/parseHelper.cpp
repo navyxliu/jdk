@@ -604,6 +604,15 @@ EscapedState* PEAState::materialize(GraphKit* kit, Node* var) {
 #endif
       kit->access_store_at(objx, adr, adr_type, val, field_type, bt, decorators);
     }
+    // if var is associated with MemBarRelease, copy it for objx
+    for (DUIterator_Fast kmax, k = var->fast_outs(kmax); k < kmax; k++) {
+      Node* use = var->fast_out(k);
+
+      if (use->Opcode() == Op_MemBarRelease) {
+        kit->insert_mem_bar(Op_MemBarRelease, objx);
+        break;
+      }
+    }
   } else {
     assert(false, "array not support yet!");
   }
