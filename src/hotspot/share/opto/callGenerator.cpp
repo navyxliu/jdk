@@ -927,12 +927,14 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   // Need to merge slow and fast?
   if (slow_map == nullptr) {
     // The fast path is the only path remaining.
+    kit.map()->set_replaced_nodes(replaced_nodes);
     return kit.transfer_exceptions_into_jvms();
   }
 
   if (kit.stopped()) {
     // Inlined method threw an exception, so it's just the slow path after all.
     kit.set_jvms(slow_jvms);
+    kit.map()->set_replaced_nodes(replaced_nodes);
     return kit.transfer_exceptions_into_jvms();
   }
 
