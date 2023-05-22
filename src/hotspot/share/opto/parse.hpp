@@ -646,7 +646,6 @@ class Parse : public GraphKit {
 
   // Use speculative type to optimize CmpP node
   Node* optimize_cmp_with_klass(Node* c);
-  void set_allocation_MemBar_redundancy(Node* obj, bool redundant);
 
  public:
 #ifndef PRODUCT

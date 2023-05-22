@@ -1005,22 +1005,6 @@ void Parse::throw_to_exit(SafePointNode* ex_map) {
   _exits.add_exception_state(caller_ex_map);
 }
 
-void Parse::set_allocation_MemBar_redundancy(Node* obj, bool redundant) {
-  assert(DoPartialEscapeAnalysis, "sanity");
-
-  if (obj == nullptr || obj == top() || !DoEscapeAnalysis)
-    return;
-
-  if (obj->is_Phi() || obj->Opcode() == Op_CastPP) {
-    for (uint i = 1; i < obj->req(); ++i) {
-      set_allocation_MemBar_redundancy(obj->in(i), redundant);
-    }
-  } else {
-    AllocateNode *alloc = AllocateNode::Ideal_allocation(obj, &_gvn);
-    alloc->set_allocation_MemBar_redundant(redundant);
-  }
-}
-
 //------------------------------do_exits---------------------------------------
 void Parse::do_exits() {
   set_parse_bci(InvocationEntryBci);
@@ -1084,7 +1068,6 @@ void Parse::do_exits() {
 
       if (DoEscapeAnalysis && alloc != nullptr) {
         alloc->compute_MemBar_redundancy(method());
-        //set_allocation_MemBar_redundancy(obj, alloc->is_allocation_MemBar_redundant());
       }
     }
     if (PrintOpto && (Verbose || WizardMode)) {
