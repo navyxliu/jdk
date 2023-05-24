@@ -685,6 +685,20 @@ void PEAState::validate() const {
 }
 #endif
 
+void PEAState::materialize_all() {
+  Unique_Node_List objs;
+  int sz = objects(objs);
+
+  for (int i = 0; i < sz; ++i) {
+    ObjID id = static_cast<ObjID>(objs.at(i));
+    ObjectState* os = get_object_state(id);
+
+    if (os->is_virtual()) {
+      update(id, new EscapedState(get_cooked_oop(id)));
+    }
+  }
+}
+
 // get the key set from _state. we stop maintaining aliases for the materialized objects.
 int PEAState::objects(Unique_Node_List& nodes) const {
   _state.iterate([&](ObjID obj, ObjectState* state) {
