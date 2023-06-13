@@ -1902,8 +1902,12 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
                   if (id == pred_as.is_alias(n) && !((pred_os = pred_as.get_object_state(id))->is_virtual())) { // n is escaped.
                     // materialize 'm' because it has been materialized in save_block.
                     Node* mv = ensure_object_materialized(m, as, map(), r, block()->init_pnum());
-                    phi->replace_edge(m, mv);
-                    as.escape(id, phi);
+                    if (mv == m) {
+                      as.escape(id, phi, false);
+                    } else {
+                      phi->replace_edge(m, mv);
+                      as.escape(id, phi, true);
+                    }
                   }
                 }
               } // DoPartialEscapeAnalysis
@@ -1933,11 +1937,11 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               } else if (as.get_object_state(id)->is_virtual() && !pred_as.get_object_state(id)->is_virtual()) {
                 // we should do passive materialization for all distinct inputs of phi.
                 // skip it for the time being.
-                as.escape(id, phi);
+                as.escape(id, phi, false);
               }
             } else {
               // merge a different object, including n = nullptr
-              as.escape(id, phi);
+              as.escape(id, phi, false);
             }
           } else {
             id = pred_as.is_alias(n);
@@ -1946,7 +1950,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               // Current block has not seen id before. It's likely t is null, ConP or a global variable.
               // however, n is tracked in predecessor block. We mark t'= phi(t, n) as 'Escaped', or we would
               // have 'Bad graph detected'.
-              as.escape(id, phi);
+              as.escape(id, phi, false);
             }
           }
         }
@@ -2198,7 +2202,9 @@ PhiNode *Parse::ensure_phi(int idx, bool nocreate) {
       ObjectState* os = as.get_object_state(id);
       if (!os->is_virtual()) {
         EscapedState* es = static_cast<EscapedState*>(os);
-        es->set_materialized_value(phi);
+        if (es->materialized_value() != nullptr) {
+          es->set_materialized_value(phi);
+        }
       }
     }
   }

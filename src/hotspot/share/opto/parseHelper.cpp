@@ -618,7 +618,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
     assert(false, "array not support yet!");
   }
 
-  escape(alloc, objx);
+  escape(alloc, objx, true);
 
 #ifndef PRODUCT
   if (PEAVerbose) {
@@ -697,7 +697,7 @@ void PEAState::materialize_all() {
     ObjectState* os = get_object_state(id);
 
     if (os->is_virtual()) {
-      escape(id, get_java_oop(id, false));
+      escape(id, get_java_oop(id, false), false);
     }
   }
 }
@@ -731,7 +731,8 @@ Node* PEAState::get_java_oop(ObjID id, bool materialized) const {
                      }
                      return true;
                    });
-    assert(os->is_virtual() || obj == static_cast<EscapedState*>(os)->materialized_value(),
+    assert(os->is_virtual() || static_cast<EscapedState*>(os)->materialized_value() == nullptr ||
+           static_cast<EscapedState*>(os)->materialized_value() == obj,
            "the java_oop of an Escaped Object resolved from aliases must be same as EscapedState.");
     return obj;
   }
@@ -763,10 +764,16 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
       Node* m = _state.get_java_oop(obj, false);
       Node* n = newin.get_java_oop(obj, false);
       EscapedState* es;
+      bool materialized;
       if (os1->is_virtual()) {
-        es = _state.escape(obj, m);
+        materialized = static_cast<EscapedState*>(os2)->materialized_value() != nullptr;
+        es = _state.escape(obj, m, materialized);
       } else {
         es = static_cast<EscapedState*>(os1);
+        materialized = es->materialized_value() != nullptr;
+        if (!os2->is_virtual()) {
+          materialized |= static_cast<EscapedState*>(os2)->materialized_value() != nullptr;
+        }
       }
 
       if (m->is_Phi() && m->in(0) == region) {
@@ -781,7 +788,9 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
         phi->set_req(pnum, n);
         kit->gvn().set_type(phi, type);
 
-        es->set_materialized_value(phi);
+        if (materialized) {
+          es->set_materialized_value(phi);
+        }
         _state.add_alias(obj, phi);
         _state.remove_alias(obj, m);
       }

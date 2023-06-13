@@ -153,22 +153,34 @@ class PEAState {
 
   Node* get_java_oop(ObjID id, bool materialized) const;
 
-  // convert the state of obj#id to Escaped.
-  EscapedState* escape(ObjID id, Node* p) {
+  // Convert the state of obj#id to Escaped.
+  // p is the new alias of obj#id
+  // if materialized is true, the materiazation has taken place in code.
+  // we expect to replace all appearances of object  with its java_oop.
+  EscapedState* escape(ObjID id, Node* p, bool materialized) {
+    assert(p != nullptr, "the new alias must be non-null");
     Node* old = nullptr;
-    EscapedState* es = new EscapedState(p);
+
+    EscapedState* es;
     if (contains(id)) {
       ObjectState* os = get_object_state(id);
+      // if os is EscapedState and its materialized_value is not-null,
+      if (!os->is_virtual()) {
+        materialized |= static_cast<EscapedState*>(os)->materialized_value() != nullptr;
+      }
+      es = new EscapedState(materialized ? p : nullptr);
       es->ref_cnt(os->ref_cnt()); // copy the refcnt from the original ObjectState.
       old = get_java_oop(id, false);
+    } else {
+      es = new EscapedState(materialized ? p : nullptr);
     }
     _state.put(id, es);
+    // if p == old, no-op
     add_alias(id, p);
     if (old != nullptr && old != p) {
       remove_alias(id, old);
     }
     assert(contains(id), "sanity check");
-    assert(get_java_oop(id, true) == get_java_oop(id, false), "sanity check");
     return es;
   }
 
