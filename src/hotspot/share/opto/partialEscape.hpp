@@ -154,9 +154,9 @@ class PEAState {
   Node* get_java_oop(ObjID id, bool materialized) const;
 
   // Convert the state of obj#id to Escaped.
-  // p is the new alias of obj#id
-  // if materialized is true, the materiazation has taken place in code.
-  // we expect to replace all appearances of object  with its java_oop.
+  // p is the new alias of obj#id. If materialized is true, the materiazation has taken place in code.
+  // PEA expects to replace all appearances of the object with its java_oop, or materilzied_value().
+  // refer to GraphKit::backfill_materialized.
   EscapedState* escape(ObjID id, Node* p, bool materialized) {
     assert(p != nullptr, "the new alias must be non-null");
     Node* old = nullptr;
