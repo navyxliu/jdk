@@ -1068,7 +1068,7 @@ void Parse::do_exits() {
       AllocateNode* alloc = (ObjID)alloc_with_final();
       PEAState& as = _exits.jvms()->alloc_state();
 
-      Node* obj = as.get_cooked_oop(alloc);
+      Node* obj = as.get_java_oop(alloc, false);
       _exits.insert_mem_bar(Op_MemBarRelease, obj);
 
       if (DoEscapeAnalysis && alloc != nullptr) {
@@ -1903,7 +1903,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
                     // materialize 'm' because it has been materialized in save_block.
                     Node* mv = ensure_object_materialized(m, as, map(), r, block()->init_pnum());
                     phi->replace_edge(m, mv);
-                    as.update(id, new EscapedState(phi));
+                    as.escape(id, phi);
                   }
                 }
               } // DoPartialEscapeAnalysis
@@ -1933,11 +1933,11 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               } else if (as.get_object_state(id)->is_virtual() && !pred_as.get_object_state(id)->is_virtual()) {
                 // we should do passive materialization for all distinct inputs of phi.
                 // skip it for the time being.
-                as.update(id, new EscapedState(phi));
+                as.escape(id, phi);
               }
             } else {
               // merge a different object, including n = nullptr
-              as.update(id, new EscapedState(phi));
+              as.escape(id, phi);
             }
           } else {
             id = pred_as.is_alias(n);
@@ -1946,8 +1946,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               // Current block has not seen id before. It's likely t is null, ConP or a global variable.
               // however, n is tracked in predecessor block. We mark t'= phi(t, n) as 'Escaped', or we would
               // have 'Bad graph detected'.
-              as.update(id, new EscapedState(phi));
-              as.add_alias(id, phi);
+              as.escape(id, phi);
             }
           }
         }

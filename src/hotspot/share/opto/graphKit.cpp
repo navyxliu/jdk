@@ -4266,8 +4266,7 @@ void GraphKit::replace_on_the_fly(SafePointNode* map, uint begin, uint end, PEAS
       AllocateNode* alloc = AllocateNode::Ideal_allocation(t, &_gvn);
 
       if (as.contains(alloc)) {
-        ObjectState* os = as.get_object_state(alloc);
-        Node* neww = os->get_materialized_value();
+        Node* neww = as.get_java_oop(alloc, true);
         if (neww != nullptr && neww != t) {
           map->set_req(i, neww);
         }

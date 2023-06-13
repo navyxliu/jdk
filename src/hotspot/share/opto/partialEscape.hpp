@@ -52,7 +52,6 @@ class ObjectState {
   }
 
   virtual bool is_virtual() const = 0;
-  virtual Node* get_materialized_value() = 0;
   // clone contents but not refcnt;
   virtual ObjectState* clone() const = 0;
 
@@ -75,7 +74,7 @@ class VirtualState: public ObjectState {
   VirtualState(const TypeOopPtr* oop_type);
 
   bool is_virtual() const override { return true; }
-  Node* get_materialized_value() override { return nullptr; }
+
   ObjectState* clone() const override {
     return new VirtualState(*this);
   }
@@ -100,13 +99,19 @@ class EscapedState: public ObjectState {
   EscapedState(Node* materialized) : _materialized(materialized) {}
 
   bool is_virtual() const override { return false;}
-  Node* get_materialized_value() override { return _materialized; }
+
+  Node* materialized_value() const {
+    return _materialized;
+  }
+
   void set_materialized_value(Node* node) {
     _materialized = node;
   }
+
   ObjectState* clone() const override {
     return new EscapedState(_materialized);
   }
+
   ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) override {
     assert(0, "not implemented");
     return *this;
@@ -146,13 +151,25 @@ class PEAState {
     return _state.contains(id);
   }
 
-  Node* get_cooked_oop(ObjID id) const;
+  Node* get_java_oop(ObjID id, bool materialized) const;
 
-  void update(ObjID id, ObjectState* os) {
+  // convert the state of obj#id to Escaped.
+  EscapedState* escape(ObjID id, Node* p) {
+    Node* old = nullptr;
+    EscapedState* es = new EscapedState(p);
     if (contains(id)) {
-      os->ref_cnt(get_object_state(id)->ref_cnt());
+      ObjectState* os = get_object_state(id);
+      es->ref_cnt(os->ref_cnt()); // copy the refcnt from the original ObjectState.
+      old = get_java_oop(id, false);
     }
-    _state.put(id, os);
+    _state.put(id, es);
+    add_alias(id, p);
+    if (old != nullptr && old != p) {
+      remove_alias(id, old);
+    }
+    assert(contains(id), "sanity check");
+    assert(get_java_oop(id, true) == get_java_oop(id, false), "sanity check");
+    return es;
   }
 
   // refcount is the no. of aliases which refer to the object.
@@ -167,7 +184,7 @@ class PEAState {
   void remove_alias(ObjID id, Node* var);
 
   void add_new_allocation(Node* obj);
-  EscapedState* materialize(GraphKit* kit, Node* var);
+  Node* materialize(GraphKit* kit, Node* var);
 
   int objects(Unique_Node_List& nodes) const;
   int size() const {
