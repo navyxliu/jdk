@@ -244,7 +244,4 @@ class AllocationStateMerger {
 };
 
 void printPeaStatistics();
-
-class BasicMatcher;
-extern BasicMatcher* PEAMatcher;
 #endif // SHARE_OPTO_PARTIAL_ESCAPE_HPP
