@@ -511,7 +511,16 @@ void PEAState::add_new_allocation(GraphKit* kit, Node* obj) {
       return;
     }
 
-    if (PEAContext::instance().match(kit->jvms()->method())) {
+    ciMethod* method = kit->jvms()->method();
+    if (PEAContext::instance().match(method)) {
+#ifndef PRODUCT
+      if (PEAVerbose) {
+        if (method != nullptr) {
+          method->dump_name_as_ascii(tty);
+        }
+        tty->print_cr(" start tracking %d | obj#%d", idx, alloc->_idx);
+      }
+#endif
       bool result = _state.put(alloc, new VirtualState(oop_type));
       assert(result, "the key existed in _state");
       add_alias(alloc, obj);
