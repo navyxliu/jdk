@@ -195,7 +195,7 @@ class PEAState {
 
   void remove_alias(ObjID id, Node* var);
 
-  void add_new_allocation(Node* obj);
+  void add_new_allocation(GraphKit* kit, Node* obj);
   Node* materialize(GraphKit* kit, Node* var);
 
   int objects(Unique_Node_List& nodes) const;
@@ -244,4 +244,7 @@ class AllocationStateMerger {
 };
 
 void printPeaStatistics();
+
+class BasicMatcher;
+extern BasicMatcher* PEAMatcher;
 #endif // SHARE_OPTO_PARTIAL_ESCAPE_HPP
