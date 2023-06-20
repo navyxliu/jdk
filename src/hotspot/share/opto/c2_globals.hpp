@@ -491,9 +491,9 @@
                                                                             \
   product(bool, PEAParanoid, false, EXPERIMENTAL,                           \
           "Abort when C2 expands an object which has been materialized."    \
-             "Duplicated allocation is detected caused by PEA.")            \
+          "Duplicated allocation is detected caused by PEA.")               \
                                                                             \
- notproduct(bool, PEAVerbose, false,                                       \
+  notproduct(bool, PEAVerbose, false,                                       \
           "trace PEA in verbose")                                           \
                                                                             \
   notproduct(intx, PEA_debug_idx, 0,                                        \
