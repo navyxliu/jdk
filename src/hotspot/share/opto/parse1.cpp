@@ -737,7 +737,7 @@ void Parse::do_all_blocks() {
 
         if (DoPartialEscapeAnalysis && block->is_loop_head()) {
           PEAState& as = jvms()->alloc_state();
-          as.materialize_all();
+          as.mark_all_escaped();
         }
       }
 
@@ -1068,7 +1068,7 @@ void Parse::do_exits() {
       AllocateNode* alloc = (ObjID)alloc_with_final();
       PEAState& as = _exits.jvms()->alloc_state();
 
-      Node* obj = as.get_java_oop(alloc, false);
+      Node* obj = as.get_java_oop(alloc);
       _exits.insert_mem_bar(Op_MemBarRelease, obj);
 
       if (DoEscapeAnalysis && alloc != nullptr) {
@@ -2188,13 +2188,6 @@ PhiNode *Parse::ensure_phi(int idx, bool nocreate) {
     PEAState& as = block()->state();
     ObjID id = as.is_alias(o);
     if (id != nullptr) {
-      as.add_alias(id, phi);
-      // o is dead here based on SSA property:
-      // the newer revision shadows the older revision.
-      //
-      // [xliu]: does ideal graph ensure SSA property?
-      as.remove_alias(id, o);
-
       ObjectState* os = as.get_object_state(id);
       if (!os->is_virtual()) {
         EscapedState* es = static_cast<EscapedState*>(os);

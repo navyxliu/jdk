@@ -105,6 +105,7 @@ class EscapedState: public ObjectState {
   }
 
   void set_materialized_value(Node* node) {
+    assert(node != nullptr, "assign a nullptr as materialized value");
     _materialized = node;
   }
 
@@ -151,7 +152,9 @@ class PEAState {
     return _state.contains(id);
   }
 
-  Node* get_java_oop(ObjID id, bool materialized) const;
+  Node* get_materialized_value(ObjID id) const;
+
+  Node* get_java_oop(ObjID id) const;
 
   // Convert the state of obj#id to Escaped.
   // p is the new alias of obj#id. If materialized is true, the materiazation has taken place in code.
@@ -195,7 +198,8 @@ class PEAState {
     _alias.unlink_all();
   }
 
-  void materialize_all();
+  // we drop out all virtual objects when we encounter a loop header.
+  void mark_all_escaped();
 
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
@@ -215,7 +219,6 @@ class AllocationStateMerger {
   AllocationStateMerger(PEAState& target);
   ~AllocationStateMerger(); // purge all objects which are not in live.
   void merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
-  void process_phi(PhiNode* phi, Node* old);
 };
 
 void printPeaStatistics();

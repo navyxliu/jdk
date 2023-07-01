@@ -728,7 +728,7 @@ void PEAState::validate() const {
 }
 #endif
 
-void PEAState::materialize_all() {
+void PEAState::mark_all_escaped() {
   Unique_Node_List objs;
   int sz = objects(objs);
 
@@ -737,7 +737,7 @@ void PEAState::materialize_all() {
     ObjectState* os = get_object_state(id);
 
     if (os->is_virtual()) {
-      escape(id, get_java_oop(id, false), false);
+      escape(id, get_java_oop(id), false);
     }
   }
 }
@@ -750,32 +750,40 @@ int PEAState::objects(Unique_Node_List& nodes) const {
   return nodes.size();
 }
 
-Node* PEAState::get_java_oop(ObjID id, bool materialized) const {
-  if (!contains(id)) {
-    return nullptr;
-  }
-
+// We only track '_materialized' along with control-flow if the object is Escaped due to materization.
+// GraphKit::backfill_materialized() replaces the original CheckCastPP with it at do_exits() or at safepoints.
+// If materialization doesn't take place, replacement shouldn't happen either.
+//
+// @return: nullptr if id has not been materialized, or the SSA java_oop that denotes the original object.
+Node* PEAState::get_materialized_value(ObjID id) const {
+  assert(contains(id), "must exists in allocation");
   ObjectState* os = get_object_state(id);
-  if (!os->is_virtual() && materialized) {
-    return static_cast<EscapedState*>(os)->materialized_value();
+
+  if (os->is_virtual()) {
+    return nullptr;
   } else {
-    // slow-path: we don't store the cooked object for a virtual, but we can find
-    // it among its aliases. The IR is SSA, so there is only one definition.
-    // CastPP and LoadP are aliases. Only CheckCastPP or Phi are definitions.
-    //
-    Node* obj = nullptr;
-    _alias.iterate([&](Node* alias, ObjID alloc) {
-                     if (alloc == id && (alias->is_CheckCastPP() || alias->is_Phi())) {
-                       assert(obj == nullptr, "multiple definition?");
-                       obj = alias;
-                     }
-                     return true;
-                   });
-    assert(os->is_virtual() || static_cast<EscapedState*>(os)->materialized_value() == nullptr ||
-           static_cast<EscapedState*>(os)->materialized_value() == obj,
-           "the java_oop of an Escaped Object resolved from aliases must be same as EscapedState.");
+    return static_cast<EscapedState*>(os)->materialized_value();
+  }
+}
+
+Node* PEAState::get_java_oop(ObjID id) const {
+  if (!contains(id)) return nullptr;
+
+  Node* obj = get_materialized_value(id);
+  if (obj != nullptr) {
     return obj;
   }
+  // Slow-path: we don't store the java_oop non-materialized, but we can find the unique
+  // CheckCastPP among its aliases.
+  _alias.iterate([&](Node* alias, ObjID alloc) {
+    if (alloc == id && (alias->is_CheckCastPP())) {
+      assert(obj == nullptr, "multiple definition?");
+      obj = alias;
+    }
+    return true;
+  });
+  assert(obj != nullptr && AllocateNode::Ideal_allocation(obj, nullptr) == id, "sanity check");
+  return obj;
 }
 
 AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
@@ -801,14 +809,15 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
       os1->merge(os2, kit, region, pnum);
     } else {
       assert(os1 != nullptr && os2 != nullptr, "sanity check");
-      Node* m = _state.get_java_oop(obj, false);
-      Node* n = newin.get_java_oop(obj, false);
+      Node* m = _state.get_java_oop(obj);
+      Node* n =  newin.get_java_oop(obj);
       EscapedState* es;
       bool materialized;
-      if (os1->is_virtual()) {
+
+      if (os1->is_virtual()) { // os2 must be Escaped.
         materialized = static_cast<EscapedState*>(os2)->materialized_value() != nullptr;
         es = _state.escape(obj, m, materialized);
-      } else {
+      } else {  // os1 is Escaped.
         es = static_cast<EscapedState*>(os1);
         materialized = es->materialized_value() != nullptr;
         if (!os2->is_virtual()) {
@@ -827,13 +836,13 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
         Node* phi = PhiNode::make(region, m, type);
         phi->set_req(pnum, n);
         kit->gvn().set_type(phi, type);
-
         if (materialized) {
           es->set_materialized_value(phi);
         }
-        _state.add_alias(obj, phi);
-        _state.remove_alias(obj, m);
       }
+
+      // TODO: check the inputs of phi node refer to the identical object
+      // add it to this alias if so.
     }
   }
 #ifdef ASSERT
@@ -842,9 +851,6 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
 }
 
 AllocationStateMerger::~AllocationStateMerger() {
-}
-
-void AllocationStateMerger::process_phi(PhiNode* phi, Node* old) {
 }
 
 bool PEAContext::match(ciMethod* method) const {
@@ -859,8 +865,8 @@ bool PEAContext::match(ciMethod* method) const {
 EscapedState* PEAState::escape(ObjID id, Node* p, bool materialized) {
   assert(p != nullptr, "the new alias must be non-null");
   Node* old = nullptr;
-
   EscapedState* es;
+
   if (contains(id)) {
     ObjectState* os = get_object_state(id);
     // if os is EscapedState and its materialized_value is not-null,
@@ -869,17 +875,10 @@ EscapedState* PEAState::escape(ObjID id, Node* p, bool materialized) {
     }
     es = new EscapedState(materialized ? p : nullptr);
     es->ref_cnt(os->ref_cnt()); // copy the refcnt from the original ObjectState.
-    old = get_java_oop(id, false);
   } else {
     es = new EscapedState(materialized ? p : nullptr);
   }
   _state.put(id, es);
-  // if p == old, no-op
-  add_alias(id, p);
-  if (old != nullptr && old != p) {
-    remove_alias(id, old);
-  }
-
   if (materialized) {
     static_cast<AllocateNode*>(id)->inc_materialized();
   }
