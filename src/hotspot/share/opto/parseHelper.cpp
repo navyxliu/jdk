@@ -840,14 +840,28 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
           es->set_materialized_value(phi);
         }
       }
-
-      // TODO: check the inputs of phi node refer to the identical object
-      // add it to this alias if so.
     }
   }
+
+  // process individual phi
+  SafePointNode* map = kit->map();
+  for (uint i = 0; i < map->req(); ++i) {
+    Node* node = map->in(i);
+
+    if (node != nullptr && node->is_Phi() && node->as_Phi()->region() == region) {
+      process_phi(node->as_Phi(), newin, kit, region, pnum);
+    }
+  }
+
 #ifdef ASSERT
   _state.validate();
 #endif
+}
+
+// TODO: check the inputs of phi node refer to the identical object
+// add it to this alias if so.
+void AllocationStateMerger::process_phi(PhiNode* phi, const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
+
 }
 
 AllocationStateMerger::~AllocationStateMerger() {

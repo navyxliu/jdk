@@ -214,6 +214,7 @@ class AllocationStateMerger {
  private:
   GrowableArray<ObjID> _live; // live objects
   PEAState& _state;
+  void process_phi(PhiNode* phi, const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
 
  public:
   AllocationStateMerger(PEAState& target);

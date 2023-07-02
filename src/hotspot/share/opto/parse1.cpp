@@ -1895,8 +1895,8 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               if (DoPartialEscapeAnalysis && phi != nullptr) {
                 VirtualState* vs;
 
-                if ((vs = as.as_virtual(phi)) != nullptr) { // m is Virtual
-                  ObjID id = as.is_alias(phi);
+                if ((vs = as.as_virtual(m)) != nullptr) { // m is Virtual
+                  ObjID id = as.is_alias(m);
                   ObjectState* pred_os;
 
                   if (id == pred_as.is_alias(n) && !((pred_os = pred_as.get_object_state(id))->is_virtual())) { // n is escaped.
@@ -1923,7 +1923,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
         // Part-2: materialize 'n' if it needs
         if (DoPartialEscapeAnalysis) {
-          ObjID id = as.is_alias(phi);
+          ObjID id = as.is_alias(m);
 
           if (id != nullptr) {
             if (pred_as.is_alias(n) == id) {
@@ -1943,10 +1943,11 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
             id = pred_as.is_alias(n);
 
             if (id != nullptr) {
-              // Current block has not seen id before. It's likely t is null, ConP or a global variable.
-              // however, n is tracked in predecessor block. We mark t'= phi(t, n) as 'Escaped', or we would
+              // Current block has not seen id before. It's likely m is null, ConP or a global variable.
+              // however, n is tracked in the predecessor block. We mark phi(m, n) as 'Escaped', or we would
               // have 'Bad graph detected'.
               as.escape(id, phi, false);
+              as.add_alias(id, n);
             }
           }
         }
