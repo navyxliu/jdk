@@ -750,7 +750,7 @@ int PEAState::objects(Unique_Node_List& nodes) const {
   return nodes.size();
 }
 
-// We only track '_materialized' along with control-flow if the object is Escaped due to materization.
+// We track '_merged_value' along with control-flow but only return it if _materialized = true;
 // GraphKit::backfill_materialized() replaces the original CheckCastPP with it at do_exits() or at safepoints.
 // If materialization doesn't take place, replacement shouldn't happen either.
 //
@@ -786,11 +786,15 @@ Node* PEAState::get_java_oop(ObjID id) const {
   return obj;
 }
 
-AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
-
-static bool as_virtual(ObjectState* os) {
-  return os != nullptr && os->is_virtual();
+void PEAState::merge_alias(const PEAState& newin) {
+  newin._alias.iterate([&](Node* var, ObjID alloc) {
+    assert(!_alias.contains(var) || *_alias.get(var) == alloc, "sanity check");
+    add_alias(alloc, var);
+    return true;
+  });
 }
+
+AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
 
 void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
   Unique_Node_List set1, set2;
@@ -805,29 +809,37 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
     ObjID obj = static_cast<ObjID>(set1.at(i));
     ObjectState* os1 = _state.get_object_state(obj);
     ObjectState* os2 = newin.get_object_state(obj);
-    if (as_virtual(os1) && as_virtual(os2)) {
+    if (os1->is_virtual() && os2->is_virtual()) {
       os1->merge(os2, kit, region, pnum);
     } else {
       assert(os1 != nullptr && os2 != nullptr, "sanity check");
-      Node* m = _state.get_java_oop(obj);
-      Node* n =  newin.get_java_oop(obj);
-      EscapedState* es;
+      Node* m;
+      Node* n;
       bool materialized;
+      EscapedState* es;
 
-      if (os1->is_virtual()) { // os2 must be Escaped.
-        materialized = static_cast<EscapedState*>(os2)->materialized_value() != nullptr;
+      if (os1->is_virtual()) {        // os2 must be Escaped.
+        EscapedState* es2 = static_cast<EscapedState*>(os2);
+        materialized = es2->has_materialized();
+        m = _state.get_java_oop(obj);
+        n = es2->merged_value();
         es = _state.escape(obj, m, materialized);
-      } else {  // os1 is Escaped.
+      } else if (os2->is_virtual()) { // os1 must be Escaped.
         es = static_cast<EscapedState*>(os1);
-        materialized = es->materialized_value() != nullptr;
-        if (!os2->is_virtual()) {
-          materialized |= static_cast<EscapedState*>(os2)->materialized_value() != nullptr;
-        }
+        materialized = es->has_materialized();
+        m = es->merged_value();
+        n = newin.get_java_oop(obj);
+      } else { // both os1 and os2 are Escaped.
+        es = static_cast<EscapedState*>(os1);
+        EscapedState* es2 = static_cast<EscapedState*>(os2);
+        m = es->merged_value();
+        n = es2->merged_value();
+        materialized = es->has_materialized() || es2->has_materialized();
       }
 
       if (m->is_Phi() && m->in(0) == region) {
         ensure_phi(m->as_Phi(), pnum);
-        // only update the pnum that we have never seen before.
+        // only update the pnum if we have never seen it before.
         if (m->in(pnum) == nullptr) {
           m->set_req(pnum, n);
         }
@@ -836,12 +848,14 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
         Node* phi = PhiNode::make(region, m, type);
         phi->set_req(pnum, n);
         kit->gvn().set_type(phi, type);
-        if (materialized) {
-          es->set_materialized_value(phi);
-        }
+        es->update(materialized, phi);
       }
     }
   }
+
+  // TODO: make aliases global.
+  _state.merge_alias(newin);
+
 
   // process individual phi
   SafePointNode* map = kit->map();
@@ -849,7 +863,7 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
     Node* node = map->in(i);
 
     if (node != nullptr && node->is_Phi() && node->as_Phi()->region() == region) {
-      process_phi(node->as_Phi(), newin, kit, region, pnum);
+      process_phi(node->as_Phi(), kit, region, pnum);
     }
   }
 
@@ -858,10 +872,86 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
 #endif
 }
 
-// TODO: check the inputs of phi node refer to the identical object
-// add it to this alias if so.
-void AllocationStateMerger::process_phi(PhiNode* phi, const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
+// Passive Materialization
+// ------------------------
+// Materialize an object at the phi node because at least one of its predecessors has materialized the object.
+// Since C2 PEA does not eliminate the original allocation, we skip passive materializaiton and keep using it.
+// The only problem is partial redudancy. JDK-8287061 should address this issue.
+//
+// PEA split a object based on its escapement. At the merging point, the original object is NonEscape, or it has already
+// been materialized before. the phi is 'reducible Object-Phi' in JDK-828706 and the original object is scalar replaceable!
+//
+// obj' = PHI(Region, OriginalObj, ClonedObj)
+// and OriginalObj is NonEscape but NSR; CloendObj is Global/ArgEscape
+//
+// JDK-8287061 transforms it to =>
+// obj' = PHI(Region, null, ClonedObj)
+// selector = PHI(Region, 0, 1)
+//
+// since OriginalObj is NonEscape, it is replaced by scalars.
+//
+static Node* ensure_object_materialized(Node* var, PEAState& state, SafePointNode* from_map, RegionNode* r, int pnum) {
+  // skip passive materialize for time being.
+  // if JDK-8287061 can guarantee to replace the orignial allocation, we don't need to worry about partial redundancy.
+  return var;
+}
 
+// Merge phi node incrementally.
+// we check all merged inputs in _state.
+// 1. all inputs refer to the same ObjID, then phi is created as alias of ObjID
+// 2. otherwise, any input is alias with a 'virtual' object needs to convert to 'Escaped'. replace input with merged_value.
+// 3. otherwise, if any input is aliased with an Escaped object. replace input with merged value.
+void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode* region, int pnum) {
+  ObjID unique = nullptr;
+  bool materialized = false;
+  bool same_obj = true;
+
+  for (uint i = 0; i < phi->req(); ++i) {
+    if (region->in(i) == nullptr || region->in(i)->is_top())
+      continue;
+
+    Node* node = phi->in(i);
+    ObjID obj = _state.is_alias(node);
+    if (obj != nullptr) {
+      if (unique == nullptr) {
+        unique = obj;
+      } else if (unique != obj) {
+        same_obj = false;
+      }
+
+      ObjectState* os = _state.get_object_state(obj);
+      if (!os->is_virtual()) {
+        materialized |= static_cast<EscapedState*>(os)->has_materialized();
+      }
+    } else {
+      same_obj = false;
+    }
+  }
+
+  if (same_obj) {
+    _state.add_alias(unique, phi);
+  } else {
+    for (uint i = 0; i < phi->req(); ++i) {
+      if (region->in(i) == nullptr || region->in(i)->is_top())
+        continue;
+
+      Node* node = phi->in(i);
+      ObjID obj = _state.is_alias(node);
+      if (obj != nullptr) {
+        ObjectState* os = _state.get_object_state(obj);
+        if (os->is_virtual()) {
+          ensure_object_materialized(node, _state, kit->map(), region, pnum);
+          os = _state.escape(obj, phi, materialized);
+        }
+        EscapedState* es = static_cast<EscapedState*>(os);
+        phi->replace_edge(node, es->merged_value());
+      }
+    }
+
+    if (_state.is_alias(phi)) {
+      _state.remove_alias(unique, phi);
+    }
+  }
 }
 
 AllocationStateMerger::~AllocationStateMerger() {
@@ -885,12 +975,12 @@ EscapedState* PEAState::escape(ObjID id, Node* p, bool materialized) {
     ObjectState* os = get_object_state(id);
     // if os is EscapedState and its materialized_value is not-null,
     if (!os->is_virtual()) {
-      materialized |= static_cast<EscapedState*>(os)->materialized_value() != nullptr;
+      materialized |= static_cast<EscapedState*>(os)->has_materialized();
     }
-    es = new EscapedState(materialized ? p : nullptr);
+    es = new EscapedState(materialized, p);
     es->ref_cnt(os->ref_cnt()); // copy the refcnt from the original ObjectState.
   } else {
-    es = new EscapedState(materialized ? p : nullptr);
+    es = new EscapedState(materialized, p);
   }
   _state.put(id, es);
   if (materialized) {

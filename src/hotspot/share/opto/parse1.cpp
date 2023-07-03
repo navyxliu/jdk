@@ -1890,23 +1890,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               C->gvn_replace_by(n, m);
             } else if (!check_elide_phi || !target->can_elide_SEL_phi(j)) {
               phi = ensure_phi(j, nophi);
-
-              // Part-1: only check 'm'. ensure_phi has replaced m with phi.
-              if (DoPartialEscapeAnalysis && phi != nullptr) {
-                VirtualState* vs;
-
-                if ((vs = as.as_virtual(m)) != nullptr) { // m is Virtual
-                  ObjID id = as.is_alias(m);
-                  ObjectState* pred_os;
-
-                  if (id == pred_as.is_alias(n) && !((pred_os = pred_as.get_object_state(id))->is_virtual())) { // n is escaped.
-                    // materialize 'm' because it has been materialized in save_block.
-                    Node* mv = ensure_object_materialized(m, as, map(), r, block()->init_pnum());
-                    phi->replace_edge(m, mv);
-                    as.escape(id, phi, true);
-                  }
-                }
-              } // DoPartialEscapeAnalysis
             }
           }
           break;
@@ -1921,36 +1904,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
         assert(n != top() || r->in(pnum) == top(), "live value must not be garbage");
         assert(phi->region() == r, "");
 
-        // Part-2: materialize 'n' if it needs
-        if (DoPartialEscapeAnalysis) {
-          ObjID id = as.is_alias(m);
-
-          if (id != nullptr) {
-            if (pred_as.is_alias(n) == id) {
-              // merge the same object but have different allocation states.
-              if (!as.get_object_state(id)->is_virtual() && pred_as.get_object_state(id)->is_virtual()) {
-                n = ensure_object_materialized(n, pred_as, newin, r, pnum);
-              } else if (as.get_object_state(id)->is_virtual() && !pred_as.get_object_state(id)->is_virtual()) {
-                // we should do passive materialization for all distinct inputs of phi.
-                // skip it for the time being.
-                as.escape(id, phi, false);
-              }
-            } else {
-              // merge a different object, including n = nullptr
-              as.escape(id, phi, false);
-            }
-          } else {
-            id = pred_as.is_alias(n);
-
-            if (id != nullptr) {
-              // Current block has not seen id before. It's likely m is null, ConP or a global variable.
-              // however, n is tracked in the predecessor block. We mark phi(m, n) as 'Escaped', or we would
-              // have 'Bad graph detected'.
-              as.escape(id, phi, false);
-              as.add_alias(id, n);
-            }
-          }
-        }
         phi->set_req(pnum, n);  // Then add 'n' to the merge
         if (pnum == PhiNode::Input) {
           // Last merge for this Phi.
@@ -2184,20 +2137,6 @@ PhiNode *Parse::ensure_phi(int idx, bool nocreate) {
   if (C->do_escape_analysis()) record_for_igvn(phi);
   map->set_req(idx, phi);
 
-  // replace o with phi in allocation state.
-  if (DoPartialEscapeAnalysis) {
-    PEAState& as = block()->state();
-    ObjID id = as.is_alias(o);
-    if (id != nullptr) {
-      ObjectState* os = as.get_object_state(id);
-      if (!os->is_virtual()) {
-        EscapedState* es = static_cast<EscapedState*>(os);
-        if (es->materialized_value() != nullptr) {
-          es->set_materialized_value(phi);
-        }
-      }
-    }
-  }
   return phi;
 }
 
@@ -2236,30 +2175,6 @@ PhiNode *Parse::ensure_memory_phi(int idx, bool nocreate) {
   else
     mem->set_memory_at(idx, phi);
   return phi;
-}
-
-// Passive Materialization
-// ------------------------
-// Materialize an object at the phi node because at least one of its predecessors has materialized the object.
-// Since C2 PEA does not eliminate the original allocation, we skip passive materializaiton and keep using it.
-// The only problem is partial redudancy. JDK-8287061 should address this issue.
-//
-// PEA split a object based on its escapement. At the merging point, the original object is NonEscape, or it has already
-// been materialized before. the phi is 'reducible Object-Phi' in JDK-828706 and the original object is scalar replaceable!
-//
-// obj' = PHI(Region, OriginalObj, ClonedObj)
-// and OriginalObj is NonEscape but NSR; CloendObj is Global/ArgEscape
-//
-// JDK-8287061 transforms it to =>
-// obj' = PHI(Region, null, ClonedObj)
-// selector = PHI(Region, 0, 1)
-//
-// since OriginalObj is NonEscape, it is replaced by scalars.
-//
-Node* Parse::ensure_object_materialized(Node* var, PEAState& state, SafePointNode* from_map, RegionNode* r, int pnum) {
-  // skip passive materialize for time being.
-  // if JDK-8287061 can guarantee to replace the orignial allocation, we don't need to worry about partial redundancy.
-  return var;
 }
 
 //------------------------------call_register_finalizer-----------------------

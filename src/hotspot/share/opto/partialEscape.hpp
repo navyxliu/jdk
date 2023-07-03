@@ -93,24 +93,40 @@ class VirtualState: public ObjectState {
 };
 
 class EscapedState: public ObjectState {
-  Node* _materialized;
+  bool  _materialized;
+  Node* _merged_value; // the latest java_oop
 
  public:
-  EscapedState(Node* materialized) : _materialized(materialized) {}
+  EscapedState(bool materialized, Node* value) : _materialized(materialized), _merged_value(value) {}
 
   bool is_virtual() const override { return false;}
 
   Node* materialized_value() const {
+    return _materialized ? _merged_value : nullptr;
+  }
+
+  Node* merged_value() const {
+    return _merged_value;
+  }
+
+  bool has_materialized() const {
     return _materialized;
   }
 
-  void set_materialized_value(Node* node) {
-    assert(node != nullptr, "assign a nullptr as materialized value");
-    _materialized = node;
+  void update(bool materialized, Node* node) {
+    assert(node != nullptr, "assign a nullptr as merged value");
+    assert(materialized || !_materialized, "reverting _materialized is wrong");
+
+    _materialized = materialized;
+    _merged_value = node;
+  }
+
+  void update(Node* node) {
+    update(_materialized, node);
   }
 
   ObjectState* clone() const override {
-    return new EscapedState(_materialized);
+    return new EscapedState(_materialized, _merged_value);
   }
 
   ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) override {
@@ -126,12 +142,16 @@ using PEAMap = ResourceHashtable<K, V, 17, /*table_size*/
 class PEAState {
   friend class Parse;
   PEAMap<ObjID, ObjectState*> _state;
+  // alias maps from node to ObjID.
+  // It should be global information. currently, we maintain alias for each blocks.
+  // when we merge blocks, we also merge aliases. 
   PEAMap<Node*, ObjID>        _alias;
 
  public:
   PEAState& operator=(const PEAState& init);
 
   ObjectState* get_object_state(ObjID id) const {
+    assert(contains(id), "object doesn't exist in allocation state");
     return *(_state.get(id));
   }
 
@@ -165,10 +185,8 @@ class PEAState {
   // refcount is the no. of aliases which refer to the object.
   // we do garbage collection if refcnt drops to 0.
   void add_alias(ObjID id, Node* var) {
-    assert(contains(id), "sanity check");
     if (_alias.contains(var)) return;
     _alias.put(var, id);
-    get_object_state(id)->ref_inc();
   }
 
   void remove_alias(ObjID id, Node* var);
@@ -201,6 +219,8 @@ class PEAState {
   // we drop out all virtual objects when we encounter a loop header.
   void mark_all_escaped();
 
+  void merge_alias(const PEAState& newin);
+
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif
@@ -214,7 +234,7 @@ class AllocationStateMerger {
  private:
   GrowableArray<ObjID> _live; // live objects
   PEAState& _state;
-  void process_phi(PhiNode* phi, const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
+  void process_phi(PhiNode* phi, GraphKit* kit, RegionNode* region, int pnum);
 
  public:
   AllocationStateMerger(PEAState& target);
