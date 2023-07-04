@@ -462,6 +462,16 @@ void VirtualState::print_on(outputStream* os) const {
     }
   }
 }
+
+void EscapedState::print_on(outputStream* os) const {
+  os->print_cr("Escaped = %p %d", this, _materialized);
+  if (_merged_value == nullptr) {
+    os->print_cr(" null");
+  } else {
+    _merged_value->dump();
+  }
+}
+
 #endif
 
 void PEAState::add_new_allocation(GraphKit* kit, Node* obj) {
@@ -551,20 +561,14 @@ PEAState& PEAState::operator=(const PEAState& init) {
 }
 
 void PEAState::remove_alias(ObjID id, Node* var) {
-  assert(contains(id), "sanity check");
   assert(_alias.contains(var) && (*_alias.get(var)) == id, "sanity check");
   _alias.remove(var);
-
-  if (!get_object_state(id)->ref_dec()) {
-    _state.remove(id);
-  }
 }
 
 // Inspired by GraphKit::replace_in_map. Besides the replacement of old object
 // we also need to scout map() and find loaded fields of old object. they may
 // lay in stack, locals or even argument section.
 static void replace_in_map(GraphKit* kit, Node* old, Node* neww) {
-  PhaseGVN& gvn = kit->gvn();
   SafePointNode* map = kit->jvms()->map();
 
   for (uint i = 0; i < map->req(); ++i) {
@@ -686,45 +690,29 @@ void PEAState::print_on(outputStream* os) const {
 
   _state.iterate([&](ObjID obj, ObjectState* state) {
     bool is_virt = state->is_virtual();
-    os->print("Obj#%d(%s) ref = %d aliases = [", obj->_idx, is_virt ? "Virt" : "Mat", state->ref_cnt());
-
-    _alias.iterate([&](Node* node, ObjID obj2) {
-      if (obj == obj2){
-        os->print("%d, ", node->_idx);
-      }
-      return true;
-    });
-
-    os->print_cr("]");
+    os->print("Obj#%d(%s) ref = %d\n", obj->_idx, is_virt ? "Virt" : "Mat", state->ref_cnt());
 
     if (is_virt) {
       VirtualState* vs = static_cast<VirtualState*>(state);
       vs->print_on(os);
+    } else {
+      EscapedState* es = static_cast<EscapedState*>(state);
+      es->print_on(tty);
     }
     return true;
   });
+
+  os->print_cr("Alias:");
+  _alias.iterate([&](Node* node, ObjID obj) {
+    os->print("%d -> Obj#%d\n", node->_idx, obj->_idx);
+    return true;
+  });
 }
+
 #endif
 
 #ifdef ASSERT
 void PEAState::validate() const {
-  _state.iterate([&](ObjID obj, ObjectState* state) {
-    int cnt = 0;
-    _alias.iterate([&](Node* node, ObjID obj2) {
-      if (obj == obj2){
-        cnt++;
-      }
-      return true;
-    });
-    assert(cnt == state->ref_cnt(), "refcount is broken");
-    return true;
-  });
-
-
-  _alias.iterate([&](Node* var, ObjID obj) {
-    assert(contains(obj), "id must exist");
-    return true;
-  });
 }
 #endif
 
@@ -856,7 +844,6 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
   // TODO: make aliases global.
   _state.merge_alias(newin);
 
-
   // process individual phi
   SafePointNode* map = kit->map();
   for (uint i = 0; i < map->req(); ++i) {
@@ -906,7 +893,7 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
   bool materialized = false;
   bool same_obj = true;
 
-  for (uint i = 0; i < phi->req(); ++i) {
+  for (uint i = 1; i < phi->req(); ++i) {
     if (region->in(i) == nullptr || region->in(i)->is_top())
       continue;
 
@@ -918,10 +905,9 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
       } else if (unique != obj) {
         same_obj = false;
       }
-
-      ObjectState* os = _state.get_object_state(obj);
-      if (!os->is_virtual()) {
-        materialized |= static_cast<EscapedState*>(os)->has_materialized();
+      EscapedState* es = _state.as_escaped(node);
+      if (es != nullptr) {
+        materialized |= es->has_materialized();
       }
     } else {
       same_obj = false;
@@ -929,22 +915,44 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
   }
 
   if (same_obj) {
+    //xliu: should I also check pnum == 1?
+    // phi nodes for exception handler may have leave normal paths vacant.
     _state.add_alias(unique, phi);
   } else {
-    for (uint i = 0; i < phi->req(); ++i) {
+    bool printed = false;
+
+    for (uint i = 1; i < phi->req(); ++i) {
       if (region->in(i) == nullptr || region->in(i)->is_top())
         continue;
 
       Node* node = phi->in(i);
       ObjID obj = _state.is_alias(node);
-      if (obj != nullptr) {
+      if (obj != nullptr && _state.contains(obj)) {
         ObjectState* os = _state.get_object_state(obj);
         if (os->is_virtual()) {
-          ensure_object_materialized(node, _state, kit->map(), region, pnum);
-          os = _state.escape(obj, phi, materialized);
+          Node* n = ensure_object_materialized(node, _state, kit->map(), region, pnum);
+          os = _state.escape(obj, n, materialized);
         }
         EscapedState* es = static_cast<EscapedState*>(os);
-        phi->replace_edge(node, es->merged_value());
+        if (node  != es->merged_value()) {
+          PhaseGVN& gvn = kit->gvn();
+          //bool is_in_table = gvn.hash_delete(phi);
+
+
+          //if (is_in_table) {
+          //  gvn.hash_find_insert(phi);
+          //}
+#ifndef PRODUCT
+          if (PEAVerbose) {
+            if (!printed) {
+              phi->dump();
+              printed = true;
+            }
+            tty->print("[PEA] replace %d with node %d", i, es->merged_value()->_idx);
+          }
+#endif
+          phi->replace_edge(node, es->merged_value(), &gvn);
+        }
       }
     }
 

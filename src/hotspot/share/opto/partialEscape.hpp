@@ -133,6 +133,10 @@ class EscapedState: public ObjectState {
     assert(0, "not implemented");
     return *this;
   }
+
+#ifndef PRODUCT
+  void print_on(outputStream* os) const;
+#endif
 };
 
 template<typename K, typename V>
@@ -144,7 +148,7 @@ class PEAState {
   PEAMap<ObjID, ObjectState*> _state;
   // alias maps from node to ObjID.
   // It should be global information. currently, we maintain alias for each blocks.
-  // when we merge blocks, we also merge aliases. 
+  // when we merge blocks, we also merge aliases.
   PEAMap<Node*, ObjID>        _alias;
 
  public:
@@ -201,11 +205,23 @@ class PEAState {
 
   VirtualState* as_virtual(Node* var) const {
     ObjID id = is_alias(var);
-    if (id != nullptr) {
+    if (id != nullptr && contains(id)) {
       ObjectState* os = get_object_state(id);
 
       if (os->is_virtual()) {
         return static_cast<VirtualState*>(os);
+      }
+    }
+    return nullptr;
+  }
+
+  EscapedState* as_escaped(Node* var) const {
+    ObjID id = is_alias(var);
+    if (id != nullptr && contains(id)) {
+      ObjectState* os = get_object_state(id);
+
+      if (!os->is_virtual()) {
+        return static_cast<EscapedState*>(os);
       }
     }
     return nullptr;
