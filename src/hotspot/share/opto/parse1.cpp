@@ -1890,6 +1890,41 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               C->gvn_replace_by(n, m);
             } else if (!check_elide_phi || !target->can_elide_SEL_phi(j)) {
               phi = ensure_phi(j, nophi);
+
+              // C2 PEA merges basic blocks incrementally. We have to intercept the phi creation
+              // for SFPT/map.
+              if (DoPartialEscapeAnalysis && phi != nullptr) {
+                ObjID obj1 = as.is_alias(m);
+                ObjID obj2 = pred_as.is_alias(n);
+
+                if (as.contains(obj1)) { // m points to an object that as is tracking.
+                  ObjectState* os1 = as.get_object_state(obj1);
+                  ObjectState* os2 = pred_as.contains(obj2) ? pred_as.get_object_state(obj2) : nullptr;
+                  bool need_update = false;
+
+                  if (obj1 != obj2) {    // n points to the other object, including null, ConP.
+                    need_update = true;
+                  } else if (os2 != nullptr) { // n points to the same object and pred_as is trakcing.
+                    os2 = pred_as.get_object_state(obj2);
+                    if (!os1->is_virtual() || !os2->is_virtual()) {
+                      need_update = true;
+                    }
+                  }
+
+                  if (need_update) {
+                    if (os2 != nullptr && os2->is_virtual()) {
+                      os2 = pred_as.escape(obj2, n, false);
+                    }
+
+                    if (os1->is_virtual()) {
+                      bool materialized = os2 != nullptr && static_cast<EscapedState*>(os2)->has_materialized();
+                      as.escape(obj1, phi, materialized);
+                    } else {
+                      static_cast<EscapedState*>(os1)->update(phi);
+                    }
+                  }
+                }
+              } // DoPartialEscapeAnalysis
             }
           }
           break;

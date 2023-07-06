@@ -934,7 +934,8 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
           os = _state.escape(obj, n, materialized);
         }
         EscapedState* es = static_cast<EscapedState*>(os);
-        if (node  != es->merged_value()) {
+        Node* merged_value = es->merged_value();
+        if (node != merged_value && merged_value != phi) {
           PhaseGVN& gvn = kit->gvn();
           //bool is_in_table = gvn.hash_delete(phi);
 
