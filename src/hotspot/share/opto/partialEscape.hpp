@@ -93,7 +93,7 @@ class VirtualState: public ObjectState {
 };
 
 class EscapedState: public ObjectState {
-  bool  _materialized;
+  bool  _materialized; // we may skip passive materialization.
   Node* _merged_value; // the latest java_oop
 
  public:
@@ -255,7 +255,7 @@ class AllocationStateMerger {
  public:
   AllocationStateMerger(PEAState& target);
   ~AllocationStateMerger(); // purge all objects which are not in live.
-  void merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
+  void merge(PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
 };
 
 void printPeaStatistics();

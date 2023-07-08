@@ -784,7 +784,7 @@ void PEAState::merge_alias(const PEAState& newin) {
 
 AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
 
-void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
+void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
   Unique_Node_List set1, set2;
 
   _state.objects(set1);
@@ -817,6 +817,7 @@ void AllocationStateMerger::merge(const PEAState& newin, GraphKit* kit, RegionNo
         materialized = es->has_materialized();
         m = es->merged_value();
         n = newin.get_java_oop(obj);
+        os2 = newin.escape(obj, n, false);
       } else { // both os1 and os2 are Escaped.
         es = static_cast<EscapedState*>(os1);
         EscapedState* es2 = static_cast<EscapedState*>(os2);
@@ -934,25 +935,24 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
           os = _state.escape(obj, n, materialized);
         }
         EscapedState* es = static_cast<EscapedState*>(os);
-        Node* merged_value = es->merged_value();
-        if (node != merged_value && merged_value != phi) {
-          PhaseGVN& gvn = kit->gvn();
-          //bool is_in_table = gvn.hash_delete(phi);
-
-
-          //if (is_in_table) {
-          //  gvn.hash_find_insert(phi);
-          //}
+        Node* value = es->merged_value();
+        // if value is an alias of obj, do nothing.
+        // or we select the value from i-th predecessor.
+        if (value->is_Phi() && _state.is_alias(value) != obj) {
+          value = value->in(i);
+        }
+        
+        if (node != value && value != phi) {
 #ifndef PRODUCT
           if (PEAVerbose) {
             if (!printed) {
               phi->dump();
               printed = true;
             }
-            tty->print("[PEA] replace %d with node %d", i, es->merged_value()->_idx);
+            tty->print_cr("[PEA] replace %dth input with node %d", i, value->_idx);
           }
 #endif
-          phi->replace_edge(node, es->merged_value(), &gvn);
+          phi->replace_edge(node, value);
         }
       }
     }

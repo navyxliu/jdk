@@ -1902,22 +1902,21 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
                   ObjectState* os2 = pred_as.contains(obj2) ? pred_as.get_object_state(obj2) : nullptr;
                   bool need_update = false;
 
-                  if (obj1 != obj2) {    // n points to the other object, including null, ConP.
-                    need_update = true;
-                  } else if (os2 != nullptr) { // n points to the same object and pred_as is trakcing.
-                    os2 = pred_as.get_object_state(obj2);
+                  // obj1 != obj2 if n points to something else. It could be the other object, null or a ConP.
+                  // we don't update it here because PEA doesn't create phi in this case.
+                  if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is trakcing.
                     if (!os1->is_virtual() || !os2->is_virtual()) {
                       need_update = true;
                     }
                   }
 
                   if (need_update) {
-                    if (os2 != nullptr && os2->is_virtual()) {
+                    if (os2->is_virtual()) {
                       os2 = pred_as.escape(obj2, n, false);
                     }
 
                     if (os1->is_virtual()) {
-                      bool materialized = os2 != nullptr && static_cast<EscapedState*>(os2)->has_materialized();
+                      bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
                       as.escape(obj1, phi, materialized);
                     } else {
                       static_cast<EscapedState*>(os1)->update(phi);
