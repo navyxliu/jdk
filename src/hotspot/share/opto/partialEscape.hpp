@@ -33,7 +33,7 @@ class GraphKit;
 
 class ObjectState {
   friend class PEAState;
-
+  Node* _java_oop;
   //  ObjectState(const ObjectState&) = delete;
  protected:
   int _refcnt = 0;
@@ -58,6 +58,7 @@ class ObjectState {
   int ref_cnt() const { return _refcnt; }
 
   virtual ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) = 0;
+  Node* java_oop() const { return _java_oop; }
 };
 
 class VirtualState: public ObjectState {
@@ -172,20 +173,6 @@ public:
     _aliases.remove(var);
   }
 
-  Node* get_java_oop(ObjID id) const {
-    Node* obj = nullptr;
-    // Slow-path: we don't store the java_oop non-materialized, but we can find the unique
-    // CheckCastPP among its aliases.
-    _aliases.iterate([&](Node* alias, ObjID alloc) {
-      if (alloc == id && (alias->is_CheckCastPP())) {
-        assert(obj == nullptr, "multiple definition?");
-        obj = alias;
-      }
-      return true;
-    });
-    return obj;
-  }
-
   // PEA tracks all new instances in the current compilation unit
   // so we could bisect for bugs.
   int add_object(ObjID obj) {
@@ -226,7 +213,7 @@ class PEAState {
 
   Node* get_materialized_value(ObjID id) const;
 
-  Node* get_java_oop(const PartialEscapeAnalysis* pea, ObjID id) const;
+  Node* get_java_oop(ObjID id) const;
 
   // Convert the state of obj#id to Escaped.
   // p is the new alias of obj#id. If materialized is true, the materiazation has taken place in code.
@@ -271,7 +258,7 @@ class PEAState {
   }
 
   // we drop out all virtual objects when we encounter a loop header.
-  void mark_all_escaped(const PartialEscapeAnalysis* pea);
+  void mark_all_escaped();
 
 #ifndef PRODUCT
   void print_on(outputStream* os) const;

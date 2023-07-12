@@ -737,7 +737,7 @@ void Parse::do_all_blocks() {
 
         if (DoPartialEscapeAnalysis && block->is_loop_head()) {
           PEAState& as = jvms()->alloc_state();
-          as.mark_all_escaped(PEA());
+          as.mark_all_escaped();
         }
       }
 
@@ -1068,7 +1068,7 @@ void Parse::do_exits() {
       AllocateNode* alloc = (ObjID)alloc_with_final();
       PEAState& as = _exits.jvms()->alloc_state();
 
-      Node* obj = as.get_java_oop(PEA(), alloc);
+      Node* obj = as.get_java_oop(alloc);
       _exits.insert_mem_bar(Op_MemBarRelease, obj);
 
       if (DoEscapeAnalysis && alloc != nullptr) {

@@ -702,7 +702,7 @@ void PEAState::validate() const {
 }
 #endif
 
-void PEAState::mark_all_escaped(const PartialEscapeAnalysis* pea) {
+void PEAState::mark_all_escaped() {
   Unique_Node_List objs;
   int sz = objects(objs);
 
@@ -711,7 +711,7 @@ void PEAState::mark_all_escaped(const PartialEscapeAnalysis* pea) {
     ObjectState* os = get_object_state(id);
 
     if (os->is_virtual()) {
-      escape(id, get_java_oop(pea, id), false);
+      escape(id, get_java_oop(id), false);
     }
   }
 }
@@ -740,14 +740,24 @@ Node* PEAState::get_materialized_value(ObjID id) const {
   }
 }
 
-Node* PEAState::get_java_oop(const PartialEscapeAnalysis* pea, ObjID id) const {
+Node* PEAState::get_java_oop(ObjID id) const {
   if (!contains(id)) return nullptr;
 
   Node* obj = get_materialized_value(id);
   if (obj != nullptr) {
     return obj;
   }
-  obj = pea->get_java_oop(id);
+
+  ProjNode* resproj = id->proj_out_or_null(TypeFunc::Parms);
+  if (resproj != nullptr) {
+    for (DUIterator_Fast imax, i = resproj->fast_outs(imax); i < imax; i++) {
+      Node* p = resproj->fast_out(i);
+      if (p->is_CheckCastPP()) {
+        assert(obj == nullptr, "multiple CheckCastPP?");
+        obj = p;
+      }
+    }
+  }
   assert(obj != nullptr && AllocateNode::Ideal_allocation(obj, nullptr) == id, "sanity check");
   return obj;
 }
@@ -780,14 +790,14 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
       if (os1->is_virtual()) {        // os2 must be Escaped.
         EscapedState* es2 = static_cast<EscapedState*>(os2);
         materialized = es2->has_materialized();
-        m = _state.get_java_oop(pea, obj);
+        m = _state.get_java_oop(obj);
         n = es2->merged_value();
         es = _state.escape(obj, m, materialized);
       } else if (os2->is_virtual()) { // os1 must be Escaped.
         es = static_cast<EscapedState*>(os1);
         materialized = es->has_materialized();
         m = es->merged_value();
-        n = newin.get_java_oop(pea, obj);
+        n = newin.get_java_oop(obj);
         os2 = newin.escape(obj, n, false);
       } else { // both os1 and os2 are Escaped.
         es = static_cast<EscapedState*>(os1);
