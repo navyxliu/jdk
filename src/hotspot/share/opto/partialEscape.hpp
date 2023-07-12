@@ -66,7 +66,6 @@ class VirtualState: public ObjectState {
   int _lockcnt;
   Node** _entries;
 
-
  protected:
   VirtualState(const VirtualState& other);
 
@@ -143,13 +142,70 @@ template<typename K, typename V>
 using PEAMap = ResourceHashtable<K, V, 17, /*table_size*/
                                  AnyObj::C_HEAP, mtCompiler>;
 
-class PEAState {
-  friend class Parse;
-  PEAMap<ObjID, ObjectState*> _state;
+class PartialEscapeAnalysis : public AnyObj {
   // alias maps from node to ObjID.
   // It should be global information. currently, we maintain alias for each blocks.
   // when we merge blocks, we also merge aliases.
-  PEAMap<Node*, ObjID>        _alias;
+  PEAMap<Node*, ObjID>  _aliases;
+  GrowableArray<ObjID>  _objects;
+
+public:
+  PartialEscapeAnalysis(Arena* arena): _aliases(), _objects(arena, 2, 0, nullptr) {}
+
+  ObjID is_alias(Node* node) const {
+    if (_aliases.contains(node)) {
+      return *(_aliases.get(node));
+    } else {
+      return nullptr;
+    }
+  }
+
+  // refcount is the no. of aliases which refer to the object.
+  // we do garbage collection if refcnt drops to 0.
+  void add_alias(ObjID id, Node* var) {
+    if (_aliases.contains(var)) return;
+    _aliases.put(var, id);
+  }
+
+  void remove_alias(ObjID id, Node* var) {
+    assert(_aliases.contains(var) && (*_aliases.get(var)) == id, "sanity check");
+    _aliases.remove(var);
+  }
+
+  Node* get_java_oop(ObjID id) const {
+    Node* obj = nullptr;
+    // Slow-path: we don't store the java_oop non-materialized, but we can find the unique
+    // CheckCastPP among its aliases.
+    _aliases.iterate([&](Node* alias, ObjID alloc) {
+      if (alloc == id && (alias->is_CheckCastPP())) {
+        assert(obj == nullptr, "multiple definition?");
+        obj = alias;
+      }
+      return true;
+    });
+    return obj;
+  }
+
+  // PEA tracks all new instances in the current compilation unit
+  // so we could bisect for bugs.
+  int add_object(ObjID obj) {
+    _objects.push(obj);
+    return _objects.length() - 1;
+  }
+
+  int object_idx(ObjID obj) const {
+    return _objects.find(obj);
+  }
+
+  const GrowableArray<ObjID>& all_objects() const {
+    return _objects;
+  }
+};
+
+//TODO: rename it to allocation state.
+class PEAState {
+  friend class Parse;
+  PEAMap<ObjID, ObjectState*> _state;
 
  public:
   PEAState& operator=(const PEAState& init);
@@ -157,14 +213,6 @@ class PEAState {
   ObjectState* get_object_state(ObjID id) const {
     assert(contains(id), "object doesn't exist in allocation state");
     return *(_state.get(id));
-  }
-
-  ObjID is_alias(Node* node) const {
-    if (_alias.contains(node)) {
-      return *(_alias.get(node));
-    } else {
-      return nullptr;
-    }
   }
 
   bool contains(ObjID id) const {
@@ -178,22 +226,13 @@ class PEAState {
 
   Node* get_materialized_value(ObjID id) const;
 
-  Node* get_java_oop(ObjID id) const;
+  Node* get_java_oop(const PartialEscapeAnalysis* pea, ObjID id) const;
 
   // Convert the state of obj#id to Escaped.
   // p is the new alias of obj#id. If materialized is true, the materiazation has taken place in code.
   // PEA expects to replace all appearances of the object with its java_oop, or materilzied_value().
   // refer to GraphKit::backfill_materialized.
   EscapedState* escape(ObjID id, Node* p, bool materialized);
-
-  // refcount is the no. of aliases which refer to the object.
-  // we do garbage collection if refcnt drops to 0.
-  void add_alias(ObjID id, Node* var) {
-    if (_alias.contains(var)) return;
-    _alias.put(var, id);
-  }
-
-  void remove_alias(ObjID id, Node* var);
 
   void add_new_allocation(GraphKit* kit, Node* obj);
   Node* materialize(GraphKit* kit, Node* var);
@@ -203,8 +242,8 @@ class PEAState {
     return _state.number_of_entries();
   }
 
-  VirtualState* as_virtual(Node* var) const {
-    ObjID id = is_alias(var);
+  VirtualState* as_virtual(const PartialEscapeAnalysis* pea, Node* var) const {
+    ObjID id = pea->is_alias(var);
     if (id != nullptr && contains(id)) {
       ObjectState* os = get_object_state(id);
 
@@ -215,8 +254,8 @@ class PEAState {
     return nullptr;
   }
 
-  EscapedState* as_escaped(Node* var) const {
-    ObjID id = is_alias(var);
+  EscapedState* as_escaped(const PartialEscapeAnalysis* pea, Node* var) const {
+    ObjID id = pea->is_alias(var);
     if (id != nullptr && contains(id)) {
       ObjectState* os = get_object_state(id);
 
@@ -229,13 +268,10 @@ class PEAState {
 
   void clear() {
     _state.unlink_all();
-    _alias.unlink_all();
   }
 
   // we drop out all virtual objects when we encounter a loop header.
-  void mark_all_escaped();
-
-  void merge_alias(const PEAState& newin);
+  void mark_all_escaped(const PartialEscapeAnalysis* pea);
 
 #ifndef PRODUCT
   void print_on(outputStream* os) const;

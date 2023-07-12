@@ -657,9 +657,9 @@ Parse::~Parse() {
     tty->cr();
   }
 
-  if (PEAVerbose) {
+  if (DoPartialEscapeAnalysis && PEAVerbose) {
     PEAState& as = _exits.jvms()->alloc_state();
-    auto objs = C->get_pea_objects();
+    auto objs = PEA()->all_objects();
     for (int i = 0; i < objs.length(); ++i) {
       ObjID obj = objs.at(i);
 
@@ -737,7 +737,7 @@ void Parse::do_all_blocks() {
 
         if (DoPartialEscapeAnalysis && block->is_loop_head()) {
           PEAState& as = jvms()->alloc_state();
-          as.mark_all_escaped();
+          as.mark_all_escaped(PEA());
         }
       }
 
@@ -1068,7 +1068,7 @@ void Parse::do_exits() {
       AllocateNode* alloc = (ObjID)alloc_with_final();
       PEAState& as = _exits.jvms()->alloc_state();
 
-      Node* obj = as.get_java_oop(alloc);
+      Node* obj = as.get_java_oop(PEA(), alloc);
       _exits.insert_mem_bar(Op_MemBarRelease, obj);
 
       if (DoEscapeAnalysis && alloc != nullptr) {
@@ -1894,8 +1894,9 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               // C2 PEA merges basic blocks incrementally. We have to intercept the phi creation
               // for SFPT/map.
               if (DoPartialEscapeAnalysis && phi != nullptr) {
-                ObjID obj1 = as.is_alias(m);
-                ObjID obj2 = pred_as.is_alias(n);
+                PartialEscapeAnalysis* pea = PEA();
+                ObjID obj1 = pea->is_alias(m);
+                ObjID obj2 = pea->is_alias(n);
 
                 if (as.contains(obj1)) { // m points to an object that as is tracking.
                   ObjectState* os1 = as.get_object_state(obj1);

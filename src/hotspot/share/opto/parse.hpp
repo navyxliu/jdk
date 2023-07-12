@@ -433,9 +433,9 @@ class Parse : public GraphKit {
   Node*    alloc_with_final() const   { return _alloc_with_final; }
   void set_alloc_with_final(Node* n)  {
     if (DoPartialEscapeAnalysis) {
-      assert((_alloc_with_final == nullptr) || (_alloc_with_final == jvms()->alloc_state().is_alias(n)),
+      assert((_alloc_with_final == nullptr) || (_alloc_with_final == PEA()->is_alias(n)),
              "different init objects?");
-      _alloc_with_final = jvms()->alloc_state().is_alias(n);
+      _alloc_with_final = PEA()->is_alias(n);
     } else {
       assert((_alloc_with_final == nullptr) || (_alloc_with_final == n), "different init objects?");
       _alloc_with_final = n;
