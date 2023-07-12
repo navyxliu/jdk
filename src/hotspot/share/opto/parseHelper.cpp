@@ -758,7 +758,7 @@ Node* PEAState::get_java_oop(ObjID id) const {
       }
     }
   }
-  assert(obj != nullptr && AllocateNode::Ideal_allocation(obj, nullptr) == id, "sanity check");
+  assert(obj == nullptr || AllocateNode::Ideal_allocation(obj, nullptr) == id, "sanity check");
   return obj;
 }
 

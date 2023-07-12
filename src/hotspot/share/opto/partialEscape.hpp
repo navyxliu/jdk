@@ -33,7 +33,7 @@ class GraphKit;
 
 class ObjectState {
   friend class PEAState;
-  Node* _java_oop;
+
   //  ObjectState(const ObjectState&) = delete;
  protected:
   int _refcnt = 0;
@@ -58,7 +58,6 @@ class ObjectState {
   int ref_cnt() const { return _refcnt; }
 
   virtual ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) = 0;
-  Node* java_oop() const { return _java_oop; }
 };
 
 class VirtualState: public ObjectState {
