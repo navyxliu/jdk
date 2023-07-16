@@ -572,6 +572,9 @@ static void replace_in_map(GraphKit* kit, Node* old, Node* neww) {
   }
 }
 
+// Becaues relevant objects may form a directed cyclic graph, materialization is a DFS process.
+// PEA clones the object and then it marks it escaped in allocation state. After it, PEA iterates all
+// fields and recursively materialize of the references which are still virtual in AllocationState.
 Node* PEAState::materialize(GraphKit* kit, Node* var) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
@@ -584,9 +587,21 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   }
   Atomic::inc(&peaNumMaterializations);
 #endif
+  // step-1: clone the object
   const TypeOopPtr* oop_type = var->as_Type()->type()->is_oopptr();
   Node* objx = kit->materialize_object(alloc, oop_type);
   VirtualState* virt = static_cast<VirtualState*>(get_object_state(alloc));
+
+  // we save VirtualState beforehand.
+  escape(alloc, objx, true);
+  replace_in_map(kit, var, objx);
+  pea->add_alias(alloc, objx);
+#ifndef PRODUCT
+  if (PEAVerbose) {
+    tty->print("new object: ");
+    objx->dump();
+  }
+#endif
 
   if (oop_type->isa_instptr()) {
     ciInstanceKlass* ik = oop_type->is_instptr()->instance_klass();
@@ -602,6 +617,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
       ciField* field = ik->nonstatic_field_at(i);
       BasicType bt = field->layout_type();
       const Type* type = Type::get_const_basic_type(bt);
+      bool is_obj = is_reference_type(bt);
       Node* val = virt->get_field(i);
 
 #ifndef PRODUCT
@@ -613,15 +629,22 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
 #endif
       // no initial value or is captured by InitializeNode
       if (val == nullptr) continue;
-      if (val == var) {
-        val = objx;
+
+      // step-2: recursion if val is a virtual object.
+      if (is_obj && pea->is_alias(val)) {
+        if (as_virtual(pea, val)) {
+          materialize(kit, val);
+        }
+        EscapedState* es = as_escaped(pea, val);
+        assert(es != nullptr, "the object of val is not Escaped");
+        val = es->merged_value();
       }
+
       int offset = field->offset_in_bytes();
       Node* adr = kit->basic_plus_adr(objx, objx, offset);
       const TypePtr* adr_type = C->alias_type(field)->adr_type();
       DecoratorSet decorators = IN_HEAP;
 
-      bool is_obj = is_reference_type(bt);
       // Store the value.
       const Type* field_type;
       if (!field->type()->is_loaded()) {
@@ -654,19 +677,6 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   } else {
     assert(false, "array not support yet!");
   }
-
-  escape(alloc, objx, true);
-
-#ifndef PRODUCT
-  if (PEAVerbose) {
-    tty->print("new object: ");
-    objx->dump();
-  }
-#endif
-
-  // replace obj with objx
-  replace_in_map(kit, var, objx);
-  pea->add_alias(alloc, objx);
 
 #ifdef ASSERT
   validate();
