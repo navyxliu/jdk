@@ -572,9 +572,10 @@ static void replace_in_map(GraphKit* kit, Node* old, Node* neww) {
   }
 }
 
-// Becaues relevant objects may form a directed cyclic graph, materialization is a DFS process.
-// PEA clones the object and then it marks it escaped in allocation state. After it, PEA iterates all
-// fields and recursively materialize of the references which are still virtual in AllocationState.
+// Because relevant objects may form a directed cyclic graph, materialization is a DFS process.
+// PEA clones the object and marks escaped in allocation state. PEA then iterates all fields
+// and recursively materializes the references which are still aliasing with virtual objects in
+// allocation state.
 Node* PEAState::materialize(GraphKit* kit, Node* var) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
@@ -587,7 +588,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   }
   Atomic::inc(&peaNumMaterializations);
 #endif
-  // step-1: clone the object
+
   const TypeOopPtr* oop_type = var->as_Type()->type()->is_oopptr();
   Node* objx = kit->materialize_object(alloc, oop_type);
   VirtualState* virt = static_cast<VirtualState*>(get_object_state(alloc));
@@ -630,8 +631,8 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
       // no initial value or is captured by InitializeNode
       if (val == nullptr) continue;
 
-      // step-2: recursion if val is a virtual object.
       if (is_obj && pea->is_alias(val)) {
+        // recurse if val is a virtual object.
         if (as_virtual(pea, val)) {
           materialize(kit, val);
         }
