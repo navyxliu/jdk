@@ -144,8 +144,6 @@ using PEAMap = ResourceHashtable<K, V, 17, /*table_size*/
 
 class PartialEscapeAnalysis : public AnyObj {
   // alias maps from node to ObjID.
-  // It should be global information. currently, we maintain alias for each blocks.
-  // when we merge blocks, we also merge aliases.
   PEAMap<Node*, ObjID>  _aliases;
   GrowableArray<ObjID>  _objects;
 

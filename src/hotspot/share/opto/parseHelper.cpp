@@ -787,19 +787,24 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
       bool materialized;
       EscapedState* es;
 
-      if (os1->is_virtual()) {        // os2 must be Escaped.
+      if (os1->is_virtual()) {
+        // If obj is virtual in current state,  it must be escaped in newin.
+        // Mark it escaped in current state.
         EscapedState* es2 = static_cast<EscapedState*>(os2);
         materialized = es2->has_materialized();
         m = _state.get_java_oop(obj);
         n = es2->merged_value();
         es = _state.escape(obj, m, materialized);
-      } else if (os2->is_virtual()) { // os1 must be Escaped.
+      } else if (os2->is_virtual()) {
+        // If obj is virtual in newin,  it must be escaped in current state.
+        // Mark it escaped  in newin
         es = static_cast<EscapedState*>(os1);
         materialized = es->has_materialized();
         m = es->merged_value();
         n = newin.get_java_oop(obj);
         os2 = newin.escape(obj, n, false);
-      } else { // both os1 and os2 are Escaped.
+      } else {
+        // obj is escaped in both newin and current state.
         es = static_cast<EscapedState*>(os1);
         EscapedState* es2 = static_cast<EscapedState*>(os2);
         m = es->merged_value();
@@ -917,13 +922,12 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
         }
         EscapedState* es = static_cast<EscapedState*>(os);
         Node* value = es->merged_value();
-        // if value is an alias of obj, do nothing.
-        // or we select the value from i-th predecessor.
-        if (value->is_Phi() && pea->is_alias(value) != obj) {
+        if (value->is_Phi() && value->in(0) == region) {
           value = value->in(i);
         }
 
-        if (node != value && value != phi) {
+        if (node != value) {
+          assert(value != phi, "sanity");
 #ifndef PRODUCT
           if (PEAVerbose) {
             if (!printed) {
