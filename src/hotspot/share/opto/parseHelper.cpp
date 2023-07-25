@@ -959,9 +959,7 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
   }
 }
 
-void AllocationStateMerger::merge_at_phi_creation(const PartialEscapeAnalysis* pea, PEAState& newin, PhiNode* phi, int m_idx, int n_idx) {
-  Node* m = phi->in(m_idx);
-  Node* n = phi->in(n_idx);
+void AllocationStateMerger::merge_at_phi_creation(const PartialEscapeAnalysis* pea, PEAState& newin, PhiNode* phi, Node* m, Node* n) {
   ObjID obj1 = pea->is_alias(m);
   ObjID obj2 = pea->is_alias(n);
 
