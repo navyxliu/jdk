@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
-JAVA_PATH ?= $(abspath ../build/linux-x86_64-server-fastdebug/jdk)
-export JAVA_HOME := ${JAVA_PATH}
+
+JAVA_HOME ?= $(abspath ../build/linux-x86_64-server-fastdebug/jdk)
 export PATH := ${JAVA_HOME}/bin:$(PATH)
 
 CTW_DIR := $(abspath ../test/hotspot/jtreg/testlibrary/ctw)
