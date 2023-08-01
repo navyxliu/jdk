@@ -53,11 +53,40 @@ jobs:
       - name: 'Notify about test failures'
         uses: actions/github-script@v6
         with:
-          script: core.setFailed('${{ steps.run-tests.outputs.error-message }}')
+          script: core.setFailed('${{ steps.smoke-test.outputs.error-message }}')
         if: steps.smoke-test.outputs.failure == 'true'
 
-  hotspot-tier1:
+  ctw-test:
     needs: smoke-test
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 'Checkout the JDK source'
+        uses: actions/checkout@v3
+
+      - name: 'Get bundles'
+        id: bundles
+        uses: ./.github/actions/get-bundles
+        with:
+          platform: linux-x64
+          debug-suffix: -debug
+
+      - name: 'Run CTW java.base'
+        id: ctw-java-base
+        run: |
+          cd PEA/
+          make run-ctw JAVA_HOME=${{ steps.bundles.outputs.jdk-path }}
+          # run without inliner
+          make run-ctw-no-inline JAVA_HOME=${{ steps.bundles.outputs.jdk-path }}
+
+      # This is the best way I found to abort the job with an error message
+      - name: 'Notify about test failures'
+        uses: actions/github-script@v6
+        with:
+          script: core.setFailed('${{ steps.ctw-java-base.outputs.error-message }}')
+        if: steps.ctw-java-base.outputs.failure == 'true'
+
+  hotspot-tier1:
+    needs: ctw-test
     runs-on: ubuntu-22.04
     steps:
       - name: 'Checkout the JDK source'
@@ -140,7 +169,7 @@ jobs:
         if: steps.run-tests.outputs.failure == 'true'
 
   jdk-tier1:
-    needs: smoke-test
+    needs: ctw-test
     runs-on: ubuntu-22.04
     steps:
       - name: 'Checkout the JDK source'
@@ -223,7 +252,7 @@ jobs:
         if: steps.run-tests.outputs.failure == 'true'
 
   langtools-tier1:
-    needs: smoke-test
+    needs: ctw-test
     runs-on: ubuntu-22.04
     steps:
       - name: 'Checkout the JDK source'
