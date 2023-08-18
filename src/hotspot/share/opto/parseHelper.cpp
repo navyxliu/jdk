@@ -666,8 +666,10 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   }
 #endif
 
-  assert(virt->_oop_type->isa_instptr() == oop_type->isa_instptr(), "type of oopptr is inconsistent!");
   if (oop_type->isa_instptr()) {
+    // virt->_oop_type is an exact non-null pointer. oop_type may not be exact, or BOT
+    // We check that they both refer to the same java type.
+    assert(virt->_oop_type->is_instptr()->is_same_java_type_as(oop_type), "type of oopptr is inconsistent!");
 #ifndef PRODUCT
     if (PEAVerbose) {
       ciInstanceKlass* ik = oop_type->is_instptr()->instance_klass();
