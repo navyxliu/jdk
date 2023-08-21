@@ -83,12 +83,12 @@ class VirtualState: public ObjectState {
   Node* get_field(ciField* field) const;
 
   ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) override;
+
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif
 
   class iterator {
-    friend bool operator==(const iterator& lhs, const iterator& rhs);
    private:
     const VirtualState* _state;
     int _end;
@@ -105,14 +105,13 @@ class VirtualState: public ObjectState {
       }
     }
 
-    void terminate() {
-      _idx = _end = 0;
+    bool has_next() const {
+      return _idx < _end;
     }
 
     void operator++() {
-      if (++_idx >= _end) {
-        terminate();
-      }
+      assert(has_next(), "out of range.");
+      ++_idx;
     }
 
     ciField* field() const {
@@ -129,14 +128,8 @@ class VirtualState: public ObjectState {
     }
   };
 
-  iterator field_begin() {
+  iterator field_iterator() {
     return {this};
-  }
-
-  iterator field_end() {
-    iterator end = {this};
-    end.terminate();
-    return end;
   }
 };
 

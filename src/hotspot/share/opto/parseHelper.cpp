@@ -353,13 +353,6 @@ public:
 // Our adaption to C2.
 // https://gist.github.com/navyxliu/62a510a5c6b0245164569745d758935b
 //
-bool operator==(const VirtualState::iterator& lhs, const VirtualState::iterator& rhs) {
-  return lhs._state == rhs._state && lhs._end == rhs._end && lhs._idx == rhs._idx;
-}
-
-bool operator!=(const VirtualState::iterator& lhs, const VirtualState::iterator& rhs) {
-  return !(lhs == rhs);
-}
 
 VirtualState::VirtualState(const TypeOopPtr* oop_type): _oop_type(oop_type), _lockcnt(0) {
   Compile* C = Compile::current();
@@ -679,7 +672,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
     }
 #endif
 
-    for (auto&& it = virt->field_begin(); it != virt->field_end(); ++it) {
+    for (auto&& it = virt->field_iterator(); it.has_next(); ++it) {
       ciField* field = it.field();
       Node* val = it.value();
 
@@ -703,7 +696,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
       if (os->is_virtual()) {
         VirtualState* vs = static_cast<VirtualState*>(os);
 
-        for (auto&& i = vs->field_begin(); i != vs->field_end(); ++i) {
+        for (auto&& i = vs->field_iterator(); i.has_next(); ++i) {
           if (i.value() == var) {
             vs->set_field(i.field(), objx);
             put_field(kit, i.field(), get_java_oop(obj), objx);
