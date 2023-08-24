@@ -358,6 +358,17 @@ jobs:
         id: jtreg
         uses: ./.github/actions/get-jtreg
 
+      - name: 'Set PATH'
+        id: path
+        run: |
+          # We need a minimal PATH on Windows
+          # Set PATH to "", so just GITHUB_PATH is included
+          if [[ '${{ runner.os }}' == 'Windows' ]]; then
+            echo "value=" >> $GITHUB_OUTPUT
+          else
+            echo "value=`pwd`:$PATH" >> $GITHUB_OUTPUT
+          fi
+
       - name: 'Run tests'
         id: run-tests
         run: >
@@ -370,6 +381,8 @@ jobs:
           TEST_IMAGE_DIR=${{ steps.bundles.outputs.tests-path }}
           JTREG='JAVA_OPTIONS=-XX:-CreateCoredumpOnCrash -XX:+UnlockExperimentalVMOptions -XX:+DoPartialEscapeAnalysis;VERBOSE=fail,error,time;KEYWORDS=!headful'
           && bash ./.github/scripts/gen-test-summary.sh "$GITHUB_STEP_SUMMARY" "$GITHUB_OUTPUT"
+        env:
+          PATH: ${{ steps.path.outputs.value }}
 
         # This is a separate step, since if the markdown from a step gets bigger than
         # 1024 kB it is skipped, but then the short summary above is still generated
@@ -418,7 +431,7 @@ jobs:
         if: steps.run-tests.outputs.failure == 'true'
 
   jdk-tier2:
-    needs: ctw-test
+    needs: jdk-tier1
     runs-on: ubuntu-22.04
     steps:
       - name: 'Checkout the JDK source'
