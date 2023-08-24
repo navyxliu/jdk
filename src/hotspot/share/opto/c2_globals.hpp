@@ -486,7 +486,7 @@
   notproduct(bool, PrintEscapeAnalysis, false,                              \
           "Print the results of escape analysis")                           \
                                                                             \
-  product(bool, DoPartialEscapeAnalysis, false, EXPERIMENTAL,               \
+  product(bool, DoPartialEscapeAnalysis, true, EXPERIMENTAL,               \
           "Perform partial escape analysis")                                \
                                                                             \
   product(ccstr, PEAMethodOnly, nullptr, EXPERIMENTAL,                      \
