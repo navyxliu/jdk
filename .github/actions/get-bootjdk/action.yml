@@ -105,6 +105,6 @@ runs:
       id: path-name
       run: |
         # Export the path
-        bootjdk=`pwd`/boot/jdk
+        bootjdk=`pwd`/bootjdk/jdk
         echo "path=$bootjdk" >> $GITHUB_OUTPUT
       shell: bash
