@@ -278,6 +278,7 @@ public:
     assert(is_mon(off), "should be called only for monitor edge");
     return (0 == bitfield(off - monoff(), 0, logMonitorEdges));
   }
+
   bool is_monitor_use(uint off)    const { return (is_mon(off)
                                                    && is_monitor_box(off))
                                              || (caller() && caller()->is_monitor_use(off)); }
@@ -417,6 +418,8 @@ public:
   // Handle monitor stack
   void push_monitor( const FastLockNode *lock );
   void pop_monitor ();
+  void del_monitor (JVMState* current, int mon_id);
+
   Node *peek_monitor_box() const;
   Node *peek_monitor_obj() const;
   // Peek Operand Stacks, JVMS 2.6.2

@@ -3470,6 +3470,55 @@ FastLockNode* GraphKit::shared_lock(Node* obj) {
 
   return flock;
 }
+// lockNode is a safepoint!, so we can't create with the jvmstate.
+// we clone the original LockNode.
+void GraphKit::clone_shared_lock(Node* obj, LockNode* old_lock) {
+  LockNode* lock = (old_lock->clone())->as_Lock();
+
+  // bci is either a monitorenter bc or InvocationEntryBci
+  // %%% SynchronizationEntryBCI is redundant; use InvocationEntryBci in interfaces
+  // Box the stack location
+  Node* box = _gvn.transform(new BoxLockNode(next_monitor()));
+  Node* mem = reset_memory();
+
+  FastLockNode * flock = _gvn.transform(new FastLockNode(0, obj, box) )->as_FastLock();
+
+  // Create the rtm counters for this fast lock if needed.
+  flock->create_rtm_lock_counter(sync_jvms()); // sync_jvms used to get current bci
+
+  // Add monitor to debug info for the slow path.  If we block inside the
+  // slow path and de-opt, we need the monitor hanging around
+  map()->push_monitor( flock );
+
+  lock->set_req(TypeFunc::Control, control());
+  lock->set_req(TypeFunc::Memory , mem);
+  lock->set_req(TypeFunc::I_O    , top())     ;   // does no i/o
+  lock->set_req(TypeFunc::FramePtr, frameptr());
+  lock->set_req(TypeFunc::ReturnAdr, top());
+
+  lock->set_req(TypeFunc::Parms + 0, obj);
+  lock->set_req(TypeFunc::Parms + 1, box);
+  lock->set_req(TypeFunc::Parms + 2, flock);
+
+  lock = _gvn.transform( lock )->as_Lock();
+
+  // lock has no side-effects, sets few values
+  set_predefined_output_for_runtime_call(lock, mem, TypeRawPtr::BOTTOM);
+
+  insert_mem_bar(Op_MemBarAcquireLock);
+
+  // Add this to the worklist so that the lock can be eliminated
+  record_for_igvn(lock);
+
+#ifndef PRODUCT
+  if (PrintLockStatistics) {
+    // Update the counter for this lock.  Don't bother using an atomic
+    // operation since we don't require absolute accuracy.
+    lock->create_lock_counter(map()->jvms());
+    increment_counter(lock->counter()->addr());
+  }
+#endif
+}
 
 
 //------------------------------shared_unlock----------------------------------
@@ -3512,6 +3561,67 @@ void GraphKit::shared_unlock(Node* box, Node* obj) {
 
   // Kill monitor from debug info
   map()->pop_monitor( );
+}
+
+LockNode* GraphKit::shared_unlock(Node* obj) {
+  // bci is either a monitorenter bc or InvocationEntryBci
+  // %%% SynchronizationEntryBCI is redundant; use InvocationEntryBci in interfaces
+  assert(SynchronizationEntryBCI == InvocationEntryBci, "");
+
+  if( !GenerateSynchronizationCode ) {
+    return nullptr;
+  }
+  int mon_id= 0;
+  JVMState* current = jvms();
+  while (current != nullptr) {
+    for (mon_id = 0;  mon_id < current ->nof_monitors() && current->map()->monitor_obj(current, mon_id) != obj; ++mon_id);
+    if (mon_id  < current->nof_monitors()) break;
+    current = current->caller();
+  }
+
+  assert(current != nullptr && mon_id < current->nof_monitors(), "unlocked object detected");
+
+  LockNode* lock = nullptr; // the jvmstate when jvm locked obj
+  if (!stopped()) {               // Dead monitor?
+    Node* box = current->map()->monitor_box(current, mon_id);
+
+    // Memory barrier to avoid floating things down past the locked region
+    insert_mem_bar(Op_MemBarReleaseLock);
+
+    const TypeFunc *tf = OptoRuntime::complete_monitor_exit_Type();
+    UnlockNode *unlock = new UnlockNode(C, tf);
+#ifdef ASSERT
+    unlock->set_dbg_jvms(sync_jvms());
+#endif
+    uint raw_idx = Compile::AliasIdxRaw;
+    unlock->init_req( TypeFunc::Control, control() );
+    unlock->init_req( TypeFunc::Memory , memory(raw_idx) );
+    unlock->init_req( TypeFunc::I_O    , top() )     ;   // does no i/o
+    unlock->init_req( TypeFunc::FramePtr, frameptr() );
+    unlock->init_req( TypeFunc::ReturnAdr, top() );
+
+    unlock->init_req(TypeFunc::Parms + 0, obj);
+    unlock->init_req(TypeFunc::Parms + 1, box);
+    unlock = _gvn.transform(unlock)->as_Unlock();
+
+    Node* mem = reset_memory();
+
+    // unlock has no side-effects, sets few values
+    set_predefined_output_for_runtime_call(unlock, mem, TypeRawPtr::BOTTOM);
+
+    for (DUIterator_Fast kmax, k = box->fast_outs(kmax); k < kmax; k++) {
+      Node* use = box->fast_out(k);
+
+      if (use->is_Lock() && use->in(TypeFunc::Parms) == obj) {
+        assert(lock == nullptr || lock == use , "multiple LockNodes? ");
+        lock = use->as_Lock();
+      }
+    }
+  }
+
+  // Kill monitor from debug info
+  current->map()->del_monitor(current, mon_id);
+  return lock;
 }
 
 //-------------------------------get_layout_helper-----------------------------

@@ -573,21 +573,6 @@ PEAState& PEAState::operator=(const PEAState& init) {
   return *this;
 }
 
-// Inspired by GraphKit::replace_in_map. Besides the replacement of old object
-// we also need to scout map() and find loaded fields of old object. they may
-// lay in stack, locals or even argument section.
-static void replace_in_map(GraphKit* kit, Node* old, Node* neww) {
-  SafePointNode* map = kit->jvms()->map();
-
-  for (uint i = 0; i < map->req(); ++i) {
-    Node* x = map->in(i);
-
-    if (x == old) {
-      map->set_req(i, neww); // safepointNode is not hashashable.
-      map->record_replaced_node(old, neww); // flush to caller.
-    }
-  }
-}
 void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
@@ -639,6 +624,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
   ObjID alloc = pea->is_alias(var);
+  VirtualState* virt = static_cast<VirtualState*>(get_object_state(alloc));
 
   assert(alloc != nullptr && get_object_state(alloc)->is_virtual(), "sanity check");
 #ifndef PRODUCT
@@ -650,12 +636,24 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
 
   const TypeOopPtr* oop_type = var->as_Type()->type()->is_oopptr();
   Node* objx = kit->materialize_object(alloc, oop_type);
-  VirtualState* virt = static_cast<VirtualState*>(get_object_state(alloc));
 
   // we save VirtualState beforehand.
   escape(alloc, objx, true);
-  replace_in_map(kit, var, objx);
   pea->add_alias(alloc, objx);
+
+  if (virt->lockcnt() > 0 && GenerateSynchronizationCode) {
+    if (PEAVerbose) {
+      tty->print_cr("materializing an object with unbalanced monitor");
+    }
+    for (int i = 0; i < virt->lockcnt(); ++i) {
+      auto old_lock = kit->shared_unlock(var);
+      if (old_lock) {
+        kit->clone_shared_lock(objx, old_lock);
+      }
+    }
+  }
+
+  kit->replace_in_map(var, objx);
 #ifndef PRODUCT
   if (PEAVerbose) {
     tty->print("new object: ");
@@ -709,6 +707,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
       }
       return true;
     });
+
     // if var is associated with MemBarRelease, copy it for objx
     for (DUIterator_Fast kmax, k = var->fast_outs(kmax); k < kmax; k++) {
       Node* use = var->fast_out(k);

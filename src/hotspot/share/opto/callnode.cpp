@@ -1432,6 +1432,24 @@ void SafePointNode::pop_monitor() {
   assert(jvms()->nof_monitors() == num_before_pop-1, "");
 }
 
+void SafePointNode::del_monitor(JVMState* current, int mon_id) {
+  assert(mon_id >= 0 && mon_id < current->nof_monitors(), "invalid monitor id");
+
+  if (current == jvms() && mon_id == current->nof_monitors() - 1) {
+    pop_monitor();
+  } else {
+    // Delete last monitor from debug info
+    debug_only(int num_before_pop = current->nof_monitors());
+    const int MonitorEdges = 2;
+    int p = current->monoff() + (mon_id * MonitorEdges);
+    current->set_scloff(current->scloff() - MonitorEdges);
+    current->set_endoff(current->endoff() - MonitorEdges);
+    del_req_ordered(p); // delete box
+    del_req_ordered(p); // delete obj
+    assert(current->nof_monitors() == num_before_pop-1, "");
+  }
+}
+
 Node *SafePointNode::peek_monitor_box() const {
   int mon = jvms()->nof_monitors() - 1;
   assert(mon >= 0, "must have a monitor");

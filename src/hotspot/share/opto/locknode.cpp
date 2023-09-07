@@ -189,6 +189,15 @@ void Parse::do_monitor_enter() {
   // the monitor object is not part of debug info expression stack
   pop();
 
+  if (DoPartialEscapeAnalysis) {
+    PEAState& state = jvms()->alloc_state();
+    VirtualState* vs = state.as_virtual(PEA(), obj);
+
+    if (vs != nullptr) {
+      vs->lock_inc();
+    }
+  }
+
   // Insert a FastLockNode which takes as arguments the current thread pointer,
   // the obj pointer & the address of the stack slot pair used for the lock.
   shared_lock(obj);
@@ -201,6 +210,15 @@ void Parse::do_monitor_exit() {
   // need to set it for monitor exit as well.
   // OSR compiled methods can start with lock taken
   C->set_has_monitors(true);
+
+  if (DoPartialEscapeAnalysis) {
+    PEAState& state = jvms()->alloc_state();
+    VirtualState* vs = state.as_virtual(PEA(), peek());
+
+    if (vs != nullptr) {
+      vs->lock_dec();
+    }
+  }
 
   pop();                        // Pop oop to unlock
   // Because monitors are guaranteed paired (else we bail out), we know

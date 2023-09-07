@@ -7,6 +7,15 @@ class MatInMonitor {
         }
     }
 
+    public void test2() {
+        Object x = new Object();
+        Object y = new Object();
+        synchronized (x) {
+        synchronized (y) {
+            _cache = x;
+        }}
+    }
+
     // c2 doesn't support this nesting form. GeneratePairingInfo regards it as 'unbalanced'.
     public void testNested() {
         Object x = new Object();
@@ -17,7 +26,9 @@ class MatInMonitor {
         }}}
     }
 
-    synchronized void bar() { }
+    synchronized void bar() {
+        _cache = this; // escaping
+    }
     synchronized void foo() { bar(); }
 
     // Perfectly fine in C2. it is also a nesting lock after inlining.
@@ -33,6 +44,7 @@ class MatInMonitor {
 
         for (int i = 0; i < 2; ++i) {
             kase.test();
+            kase.test2();
             kase.testNested();
             kase.testNested2();
         }
