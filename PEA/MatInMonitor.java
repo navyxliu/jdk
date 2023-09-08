@@ -16,6 +16,14 @@ class MatInMonitor {
         }}
     }
 
+    public void test3(boolean cond) {
+        Object x = new Object();
+        synchronized (x) {
+            if (cond) {
+                _cache = x;
+            }
+        }
+    }
     // c2 doesn't support this nesting form. GeneratePairingInfo regards it as 'unbalanced'.
     public void testNested() {
         Object x = new Object();
@@ -42,9 +50,10 @@ class MatInMonitor {
     public static void main(String[] args)  {
         MatInMonitor kase = new MatInMonitor();
 
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < 1_000_000; ++i) {
             kase.test();
             kase.test2();
+            kase.test3(0 == (i& 0xf));
             kase.testNested();
             kase.testNested2();
         }
