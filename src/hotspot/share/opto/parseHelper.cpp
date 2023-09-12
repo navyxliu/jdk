@@ -614,7 +614,50 @@ void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
 #endif
   kit->access_store_at(objx, adr, adr_type, val, field_type, bt, decorators);
 }
+// copy from MacroExpand::eliminate_locking_node.
+// we have to delete old lock before LoopOpt.
+static void eliminate_lock(GraphKit* kit, LockNode* alock) {
+  Compile* C = kit->C;
+  Node* mem  = alock->in(TypeFunc::Memory);
+  Node* ctrl = alock->in(TypeFunc::Control);
+  guarantee(ctrl != nullptr, "missing control projection, cannot replace_node() with null");
 
+  alock->log_lock_optimization(C, "eliminate_lock");
+
+#ifndef PRODUCT
+  if (PrintEliminateLocks) {
+    tty->print_cr("++++ Eliminated: %d %s '%s'", alock->_idx, (alock->is_Lock() ? "Lock" : "Unlock"), alock->kind_as_string());
+  }
+#endif
+
+  CallProjections _callprojs;
+  alock->extract_projections(&_callprojs, false /*separate_io_proj*/, false /*do_asserts*/);
+  // There are 2 projections from the lock.  The lock node will
+  // be deleted when its last use is subsumed below.
+  assert(alock->outcnt() == 2 &&
+         _callprojs.fallthrough_proj != nullptr &&
+         _callprojs.fallthrough_memproj != nullptr,
+         "Unexpected projections from Lock/Unlock");
+
+  Node* fallthroughproj = _callprojs.fallthrough_proj;
+  Node* memproj_fallthrough = _callprojs.fallthrough_memproj;
+
+  // The memory projection from a lock/unlock is RawMem
+  // The input to a Lock is merged memory, so extract its RawMem input
+  // (unless the MergeMem has been optimized away.)
+  if (alock->is_Lock()) {
+    // Search for MemBarAcquireLock node and delete it also.
+    MemBarNode* membar = fallthroughproj->unique_ctrl_out()->as_MemBar();
+    assert(membar != nullptr && membar->Opcode() == Op_MemBarAcquireLock, "");
+    Node* ctrlproj = membar->proj_out(TypeFunc::Control);
+    Node* memproj = membar->proj_out(TypeFunc::Memory);
+    C->gvn_replace_by(ctrlproj, fallthroughproj);
+    C->gvn_replace_by(memproj, memproj_fallthrough);
+  }
+
+  C->gvn_replace_by(fallthroughproj, ctrl);
+  C->gvn_replace_by(memproj_fallthrough, mem);
+}
 
 // Because relevant objects may form a directed cyclic graph, materialization is a DFS process.
 // PEA clones the object and marks escaped in allocation state. PEA then iterates all fields
@@ -642,18 +685,44 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   pea->add_alias(alloc, objx);
 
   if (virt->lockcnt() > 0 && GenerateSynchronizationCode) {
-    if (PEAVerbose) {
-      tty->print_cr("materializing an object with unbalanced monitor");
-    }
-    for (int i = 0; i < virt->lockcnt(); ++i) {
-      auto old_lock = kit->shared_unlock(var);
-      if (old_lock) {
-        kit->clone_shared_lock(objx, old_lock);
+    // lock-stealing scheme:
+    // the object var has been locked N times, we are supposed to find N monitors
+    // along stacktrace. for each monitor: (obj|box), we need to replace obj with objx
+    //             Monitor
+    // ------------------------
+    // |sfpt| ... |obj|box|...|
+    // ------------------------
+    int mon_id= 0;
+    JVMState* jvms = kit->jvms();
+    int cnt = 0;
+    while (jvms != nullptr) {
+      for (mon_id = 0;  mon_id < jvms->nof_monitors() && jvms->map()->monitor_obj(jvms, mon_id) != var; ++mon_id);
+
+      if (mon_id < jvms->nof_monitors()) {
+        cnt++;
+
+        Node* box = jvms->map()->monitor_box(jvms, mon_id);
+        LockNode* lock = nullptr;
+        for (DUIterator k = box->outs(); box->has_out(k); k++) {
+          Node* use = box->out(k);
+
+          if (use->is_Lock() && use->in(TypeFunc::Parms) == var) {
+            assert(lock == nullptr || lock == use, "sanity check");
+            lock = use->as_Lock();
+          } else if (use->is_FastLock() && use->in(1) == var) {
+            use->set_req(1, objx);
+            kit->clone_shared_lock(use->as_FastLock()); // this will append a LockNode to box::_outs
+          }
+        }
+        eliminate_lock(kit, lock);
       }
+      jvms = jvms->caller();
     }
+    assert(cnt == virt->lockcnt(), "steal all locks from var");
   }
 
   kit->replace_in_map(var, objx);
+
 #ifndef PRODUCT
   if (PEAVerbose) {
     tty->print("new object: ");

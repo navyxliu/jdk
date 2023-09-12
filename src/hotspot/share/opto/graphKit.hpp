@@ -831,7 +831,7 @@ class GraphKit : public Phase {
   Node* insert_mem_bar_volatile(int opcode, int alias_idx, Node* precedent = nullptr);
   // Optional 'precedent' is appended as an extra edge, to force ordering.
   FastLockNode* shared_lock(Node* obj);
-  void clone_shared_lock(Node* obj, LockNode* lock);
+  void clone_shared_lock(FastLockNode* lock);
 
   void shared_unlock(Node* box, Node* obj);
   LockNode* shared_unlock(Node* obj);

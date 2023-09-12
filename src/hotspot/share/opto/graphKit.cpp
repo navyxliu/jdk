@@ -3472,23 +3472,13 @@ FastLockNode* GraphKit::shared_lock(Node* obj) {
 }
 // lockNode is a safepoint!, so we can't create with the jvmstate.
 // we clone the original LockNode.
-void GraphKit::clone_shared_lock(Node* obj, LockNode* old_lock) {
-  LockNode* lock = (old_lock->clone())->as_Lock();
+void GraphKit::clone_shared_lock(FastLockNode* flock) {
+  kill_dead_locals();
 
-  // bci is either a monitorenter bc or InvocationEntryBci
-  // %%% SynchronizationEntryBCI is redundant; use InvocationEntryBci in interfaces
-  // Box the stack location
-  Node* box = _gvn.transform(new BoxLockNode(next_monitor()));
   Node* mem = reset_memory();
 
-  FastLockNode * flock = _gvn.transform(new FastLockNode(0, obj, box) )->as_FastLock();
-
-  // Create the rtm counters for this fast lock if needed.
-  flock->create_rtm_lock_counter(sync_jvms()); // sync_jvms used to get current bci
-
-  // Add monitor to debug info for the slow path.  If we block inside the
-  // slow path and de-opt, we need the monitor hanging around
-  map()->push_monitor( flock );
+  const TypeFunc *tf = LockNode::lock_type();
+  LockNode *lock = new LockNode(C, tf);
 
   lock->set_req(TypeFunc::Control, control());
   lock->set_req(TypeFunc::Memory , mem);
@@ -3496,9 +3486,13 @@ void GraphKit::clone_shared_lock(Node* obj, LockNode* old_lock) {
   lock->set_req(TypeFunc::FramePtr, frameptr());
   lock->set_req(TypeFunc::ReturnAdr, top());
 
-  lock->set_req(TypeFunc::Parms + 0, obj);
-  lock->set_req(TypeFunc::Parms + 1, box);
+  lock->set_req(TypeFunc::Parms + 0, flock->in(1));
+  lock->set_req(TypeFunc::Parms + 1, flock->in(2));
   lock->set_req(TypeFunc::Parms + 2, flock);
+
+  // we can't reexecute current bc. it's not monitorenter.
+  jvms()->set_should_reexecute(false);
+  add_safepoint_edges(lock);
 
   lock = _gvn.transform( lock )->as_Lock();
 
@@ -3509,15 +3503,7 @@ void GraphKit::clone_shared_lock(Node* obj, LockNode* old_lock) {
 
   // Add this to the worklist so that the lock can be eliminated
   record_for_igvn(lock);
-
-#ifndef PRODUCT
-  if (PrintLockStatistics) {
-    // Update the counter for this lock.  Don't bother using an atomic
-    // operation since we don't require absolute accuracy.
-    lock->create_lock_counter(map()->jvms());
-    increment_counter(lock->counter()->addr());
-  }
-#endif
+  return ;
 }
 
 
