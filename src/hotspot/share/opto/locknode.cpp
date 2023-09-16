@@ -210,19 +210,27 @@ void Parse::do_monitor_exit() {
   // need to set it for monitor exit as well.
   // OSR compiled methods can start with lock taken
   C->set_has_monitors(true);
+  Node* obj = map()->peek_monitor_obj();
 
   if (DoPartialEscapeAnalysis) {
     PEAState& state = jvms()->alloc_state();
-    VirtualState* vs = state.as_virtual(PEA(), peek());
-
-    if (vs != nullptr) {
-      vs->lock_dec();
-    }
+    ObjID id = PEA()->is_alias(obj); //
+    if (id != nullptr && state.contains(id)) {
+      ObjectState* os = state.get_object_state(id);
+      if (os->is_virtual()) {
+        static_cast<VirtualState*>(os)->lock_dec();
+      } else {
+        auto materialized = state.get_materialized_value(id);
+        if (materialized != nullptr) {
+          obj = materialized;
+        }
+      }
+    } 
   }
 
   pop();                        // Pop oop to unlock
   // Because monitors are guaranteed paired (else we bail out), we know
   // the matching Lock for this Unlock.  Hence we know there is no need
   // for a null check on Unlock.
-  shared_unlock(map()->peek_monitor_box(), map()->peek_monitor_obj());
+  shared_unlock(map()->peek_monitor_box(), obj, true);
 }
