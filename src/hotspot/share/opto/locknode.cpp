@@ -223,9 +223,47 @@ void Parse::do_monitor_exit() {
         auto materialized = state.get_materialized_value(id);
         if (materialized != nullptr) {
           obj = materialized;
+
+          if (obj->is_Phi()) {
+            pop();
+
+            // dismantle this phi because it helps EA and ME eliminate Unlock nodes.
+            // bytecode monitor_exit post-dominates the object, so PhiNode has been finalized.
+            // for GraphKit::shared_unlock(), the only side-effect is control + memory.
+            // we only merge base memory because shared_unlock() will reset everything.
+            RegionNode* region = obj->in(0)->as_Region();
+            BoxLockNode* box = map()->peek_monitor_box()->as_BoxLock();
+            // initial memory state
+            RegionNode* new_rgn = new RegionNode(region->req());
+            gvn().set_type(new_rgn, Type::CONTROL);
+            record_for_igvn(new_rgn);
+            set_control(new_rgn);
+
+            // reverse i to simulate merging normal paths.
+            // merge_memory_edges() will do GVN when i == 1
+            for (uint i = region->req()-1; i > 0; --i) {
+              Node* ctl = region->in(i);
+              if (ctl != nullptr && ctl != C->top()) {
+                MergeMemNode* mem2;
+                {
+                  PreserveJVMState pjvms(this, true);
+                  set_control(ctl);
+                  shared_unlock(box, obj->in(i), false);
+                  mem2 = merged_memory();
+                  ctl = control();
+                }
+                new_rgn->init_req(i, ctl);
+                merge_memory_edges(mem2, i, false);
+              } else {
+                assert(false, "");
+              }
+            }
+            map()->pop_monitor();
+            return ;
+          }
         }
       }
-    } 
+    }
   }
 
   pop();                        // Pop oop to unlock
