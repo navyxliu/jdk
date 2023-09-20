@@ -3552,7 +3552,7 @@ void GraphKit::shared_unlock(Node* box, Node* obj, bool preserve_monitor) {
 
   // unlock has no side-effects, sets few values
   set_predefined_output_for_runtime_call(unlock, mem, TypeRawPtr::BOTTOM);
-  if (preserve_monitor) {
+  if (!preserve_monitor) {
     // Kill monitor from debug info
     map()->pop_monitor();
   }
