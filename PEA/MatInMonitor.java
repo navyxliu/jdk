@@ -1,5 +1,7 @@
 class MatInMonitor {
     private Object _cache;
+    private boolean _odd;
+
     public void test() {
         Object x = new Object();
         synchronized (x) {
@@ -12,14 +14,14 @@ class MatInMonitor {
         Object y = new Object();
         synchronized (x) {
         synchronized (y) {
-            _cache = x;
+            _cache = x; // steal the monitor of x, which is not the top of stack.
         }}
     }
 
-    public void test3(boolean cond) {
+    public void test3() {
         Object x = new Object();
         synchronized (x) {
-            if (cond) {
+            if (_odd) {
                 _cache = x;
             }
         }
@@ -35,8 +37,11 @@ class MatInMonitor {
     }
 
     synchronized void bar() {
-        _cache = this; // escaping
+        if (_odd) {
+            _cache = this; // escaping
+        }
     }
+
     synchronized void foo() { bar(); }
 
     // Perfectly fine in C2. it is also a nesting lock after inlining.
@@ -51,9 +56,11 @@ class MatInMonitor {
         MatInMonitor kase = new MatInMonitor();
 
         for (int i = 0; i < 10_000; ++i) {
+            kase._odd = 0 == (i& 0xf);
             kase.test();
             kase.test2();
-            kase.test3(0 == (i& 0xf));
+            kase.test3();
+
             kase.testNested();
             kase.testNested2();
         }
