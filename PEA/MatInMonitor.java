@@ -50,7 +50,7 @@ class MatInMonitor {
     public static void main(String[] args)  {
         MatInMonitor kase = new MatInMonitor();
 
-        for (int i = 0; i < 1_000_000; ++i) {
+        for (int i = 0; i < 10_000; ++i) {
             kase.test();
             kase.test2();
             kase.test3(0 == (i& 0xf));

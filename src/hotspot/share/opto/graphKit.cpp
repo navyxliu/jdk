@@ -3470,9 +3470,14 @@ FastLockNode* GraphKit::shared_lock(Node* obj) {
 
   return flock;
 }
-// lockNode is a safepoint!, so we can't create with the jvmstate.
-// we clone the original LockNode and FastLock
-// it's worth noting that we reuse BoxNode because it represents the slot on stack.
+// Clone LockNode for PEA materialization.
+// LockNode is a safepoint, so it's location sensitive. We can't just clone it.
+// We create it using the current JVMState and mark bytecode non-reexecute.
+//
+// It is worthy noting that we reuse BoxNode. It represents the slot on stack.
+// PhaseMacroExpand::mark_eliminated_box() can't eliminate BoxLockNode and its
+// associated AbstractLockNodes until share prove that the 'eliminated' BoxLockNode
+// is exclusive.
 void GraphKit::clone_shared_lock(Node* box, Node* obj) {
   kill_dead_locals();
 
@@ -3508,10 +3513,9 @@ void GraphKit::clone_shared_lock(Node* box, Node* obj) {
   return ;
 }
 
-
 //------------------------------shared_unlock----------------------------------
 // Emit unlocking code.
-void GraphKit::shared_unlock(Node* box, Node* obj, bool cleanup) {
+void GraphKit::shared_unlock(Node* box, Node* obj, bool preserve_monitor) {
   // bci is either a monitorenter bc or InvocationEntryBci
   // %%% SynchronizationEntryBCI is redundant; use InvocationEntryBci in interfaces
   assert(SynchronizationEntryBCI == InvocationEntryBci, "");
@@ -3519,7 +3523,7 @@ void GraphKit::shared_unlock(Node* box, Node* obj, bool cleanup) {
   if( !GenerateSynchronizationCode )
     return;
   if (stopped()) {               // Dead monitor?
-    if (cleanup) {
+    if (!preserve_monitor) {
       map()->pop_monitor();        // Kill monitor from debug info
     }
     return;
@@ -3548,9 +3552,9 @@ void GraphKit::shared_unlock(Node* box, Node* obj, bool cleanup) {
 
   // unlock has no side-effects, sets few values
   set_predefined_output_for_runtime_call(unlock, mem, TypeRawPtr::BOTTOM);
-  if (cleanup) {
+  if (preserve_monitor) {
     // Kill monitor from debug info
-    map()->pop_monitor( );
+    map()->pop_monitor();
   }
 }
 

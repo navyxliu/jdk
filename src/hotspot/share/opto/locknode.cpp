@@ -227,37 +227,105 @@ void Parse::do_monitor_exit() {
           if (obj->is_Phi()) {
             pop();
 
-            // dismantle this phi because it helps EA and ME eliminate Unlock nodes.
+            // We need to split Phi + Unlock like this:
+            // +------+   +-----+ +------+
+            // |Region|   | obj | | obj' | (PEA materialized object)
+            // +------+   +-----+ +------+
+            //        \     |    /
+            //        +------------+
+            //        |phi|        |
+            //        +------------+
+            //               |P0
+            //           +--------------+
+            //           | UnlockNode   |
+            //           +--------------+
+            //
+            // Dismantle this phi because it helps EA and ME eliminate Unlock nodes.
             // bytecode monitor_exit post-dominates the object, so PhiNode has been finalized.
-            // for GraphKit::shared_unlock(), the only side-effect is control + memory.
-            // we only merge base memory because shared_unlock() will reset everything.
+            // for GraphKit::shared_unlock(), the only side-effect is ctrl + abio + memory.
+            //
+
             RegionNode* region = obj->in(0)->as_Region();
             BoxLockNode* box = map()->peek_monitor_box()->as_BoxLock();
-            // initial memory state
-            RegionNode* new_rgn = new RegionNode(region->req());
+
+            Node* new_rgn = new RegionNode(region->req());
             gvn().set_type(new_rgn, Type::CONTROL);
-            record_for_igvn(new_rgn);
-            set_control(new_rgn);
+
+            bool merged = false;
+            GraphKit saved_ctx = {clone_map()->jvms()};
 
             // reverse i to simulate merging normal paths.
             // merge_memory_edges() will do GVN when i == 1
             for (uint i = region->req()-1; i > 0; --i) {
-              Node* ctl = region->in(i);
-              if (ctl != nullptr && ctl != C->top()) {
-                MergeMemNode* mem2;
-                {
-                  PreserveJVMState pjvms(this, true);
-                  set_control(ctl);
-                  shared_unlock(box, obj->in(i), false);
-                  mem2 = merged_memory();
-                  ctl = control();
+              Node* ctrl  = region->in(i);
+              Node* abio = nullptr;
+              MergeMemNode* mem = nullptr;
+
+              if (ctrl != nullptr && ctrl != C->top()) {
+                SafePointNode* curr = saved_ctx.clone_map();
+                GraphKit kit = { curr->jvms() };
+
+                kit.set_control(ctrl);
+                // We need to resume SafePointNode to the state as if it was the predecessor controlled by region->in(i).
+                for (uint j = 1; j < curr->req(); ++j) {
+                  Node* m = curr->in(j);
+
+                  if (j == TypeFunc::Memory) {
+                    if (m->is_Phi() && m->in(0) == region) {
+                      m = m->in(i);
+                    } else if (m->is_MergeMem()) {
+                      // a blank memory
+                      MergeMemNode* new_all_mem = MergeMemNode::make(MergeMemNode::make_empty_memory());
+                      new_all_mem->grow_to_match(m->as_MergeMem());
+                      for (MergeMemStream mms(m->as_MergeMem()); mms.next_non_empty(); ) {
+                        Node* p = mms.memory();
+                        if (p->is_Phi() && p->in(0) == region) {
+                          new_all_mem->set_req(mms.alias_idx(), p->in(i));
+                        } else {
+                          new_all_mem->set_req(mms.alias_idx(), p);
+                        }
+                      }
+                      m = new_all_mem;
+                    }
+                    curr->set_memory(m);
+                  } else if (m != nullptr && m->is_Phi() && m->in(0) == region) {
+                    curr->set_req(j, m->in(i));
+                  }
                 }
-                new_rgn->init_req(i, ctl);
-                merge_memory_edges(mem2, i, false);
+
+                kit.shared_unlock(box, obj->in(i), true);
+
+                ctrl = kit.control();
+                mem = kit.merged_memory();
+                abio = kit.i_o();
               } else {
-                assert(false, "");
+                assert(false, "impossible! monitorExit must post-dominate the PhiNode.");
+              }
+
+              new_rgn->init_req(i, ctrl);
+
+              if (!merged) {
+                merged = true;
+                set_control(new_rgn); // merge_memory_edges() requires that ctrl() is a RegionNode.
+                set_all_memory(mem);
+                set_i_o(abio);
+              } else {
+                merge_memory_edges(mem, i, false);
+                Node* phi = i_o();
+                if (!(phi->is_Phi() && phi->in(0) != new_rgn)) {
+                  phi = PhiNode::make(new_rgn, phi);
+                  gvn().set_type(phi, Type::ABIO);
+                  record_for_igvn(phi);
+                }
+                phi->set_req(i, abio);
+                set_i_o(phi);
               }
             }
+
+            new_rgn = _gvn.transform_no_reclaim(new_rgn);
+            set_control(new_rgn);
+            record_for_igvn(new_rgn);
+
             map()->pop_monitor();
             return ;
           }
@@ -270,5 +338,5 @@ void Parse::do_monitor_exit() {
   // Because monitors are guaranteed paired (else we bail out), we know
   // the matching Lock for this Unlock.  Hence we know there is no need
   // for a null check on Unlock.
-  shared_unlock(map()->peek_monitor_box(), obj, true);
+  shared_unlock(map()->peek_monitor_box(), obj);
 }

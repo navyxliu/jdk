@@ -648,13 +648,22 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
     int mon_id = 0;
     JVMState* jvms = kit->jvms();
     int cnt = 0;
+    // It's possible that the locked moninitor is not in the youngest JVMState,
+    // so we have to follow the stacktrace to discover them all.
+    //
+    // PEA Materialization steals those monitors from the original object. Here is the scheme:
+    // 1. unlock the original object.
+    // 2. lock the materialized object.
+    // 3. backfill the obj for Monitor 'obj|box' pair when Parse translates 'monitor-exit'.
+    // 4. split Phi-Unlock, so EA and ME track them individually.
+    //
     while (jvms != nullptr) {
       for (mon_id = 0;  mon_id < jvms->nof_monitors() && jvms->map()->monitor_obj(jvms, mon_id) != var; ++mon_id);
 
       if (mon_id < jvms->nof_monitors()) {
         cnt++;
         Node* box = jvms->map()->monitor_box(jvms, mon_id);
-        kit->shared_unlock(box, var, false/*cleanup*/);
+        kit->shared_unlock(box, var, true/*preserve_monitor*/); // PEA pops the monitor in Parse::monitor_exit().
         kit->clone_shared_lock(box, objx);
       }
       jvms = jvms->caller();
