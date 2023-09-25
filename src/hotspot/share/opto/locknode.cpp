@@ -240,11 +240,30 @@ void Parse::do_monitor_exit() {
             //           | UnlockNode   |
             //           +--------------+
             //
-            // Dismantle this phi because it helps EA and ME eliminate Unlock nodes.
+            // split this phi because it helps EA and ME eliminate Unlock nodes.
             // bytecode monitor_exit post-dominates the object, so PhiNode has been finalized.
             // for GraphKit::shared_unlock(), the only side-effect is ctrl + abio + memory.
             //
-
+            //
+            // +------+          +-----+                      +------+
+            // |Region|          | obj |                      | obj' |
+            // +------+          +-----+                      +------+
+            //                      |                         /
+            //                      |P0                      |P0
+            //                  +--------------+         +--------------+
+            //                  | UnlockNode   |         | UnlockNode   |
+            //                  +--------------+         +--------------+
+            //                    |   |abio |memory        |  |abio |memory
+            //                    |                 /-----/
+            //                    | ctrl           / ctrl
+            //                 +--------------------+
+            //                 | new_rgn            | ( new_rgn merges abio and memory as well)
+            //                 +--------------------+
+            //                    |ctrl |abio |memory
+            //                   +--------------------+
+            //                   | sfpt (map)         |
+            //                   +--------------------+
+            //
             RegionNode* region = obj->in(0)->as_Region();
             BoxLockNode* box = map()->peek_monitor_box()->as_BoxLock();
 

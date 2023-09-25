@@ -655,7 +655,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
     // 1. unlock the original object.
     // 2. lock the materialized object.
     // 3. backfill the obj for Monitor 'obj|box' pair when Parse translates 'monitor-exit'.
-    // 4. split Phi-Unlock, so EA and ME track them individually.
+    // 4. split Phi-Unlock in the upcoming monitor_exit (Parse::do_monitor_exit).
     //
     while (jvms != nullptr) {
       for (mon_id = 0;  mon_id < jvms->nof_monitors() && jvms->map()->monitor_obj(jvms, mon_id) != var; ++mon_id);

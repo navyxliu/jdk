@@ -3510,7 +3510,6 @@ void GraphKit::clone_shared_lock(Node* box, Node* obj) {
 
   // Add this to the worklist so that the lock can be eliminated
   record_for_igvn(lock);
-  return ;
 }
 
 //------------------------------shared_unlock----------------------------------
