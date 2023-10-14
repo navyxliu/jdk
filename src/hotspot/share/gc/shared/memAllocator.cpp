@@ -122,6 +122,7 @@ bool MemAllocator::Allocation::check_out_of_memory() {
   }
 
   if (!_thread->in_retryable_allocation()) {
+    ResourceMark rm;
     oop exception = _overhead_limit_exceeded ?
         Universe::out_of_memory_error_gc_overhead_limit() :
         Universe::out_of_memory_error_java_heap();

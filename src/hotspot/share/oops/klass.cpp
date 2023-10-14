@@ -653,9 +653,10 @@ void Klass::set_archived_java_mirror(int mirror_index) {
 void Klass::check_array_allocation_length(int length, int max_length, TRAPS) {
   if (length > max_length) {
     if (!THREAD->in_retryable_allocation()) {
+      ResourceMark rm;
       oop ex = Universe::out_of_memory_error_array_size();
-      oop msg = java_lang_Throwable::message(ex);
-      report_java_out_of_memory(java_lang_String::as_utf8_string(msg), [&] {
+      const char* msg = java_lang_String::as_utf8_string(java_lang_Throwable::message(ex));
+      report_java_out_of_memory(msg, [&] {
         Handle h_exception(THREAD, ex);
         java_lang_Throwable::print_stack_trace(h_exception, tty);
       });
