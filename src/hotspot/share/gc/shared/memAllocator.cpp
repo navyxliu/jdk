@@ -121,19 +121,22 @@ bool MemAllocator::Allocation::check_out_of_memory() {
     return false;
   }
 
-  const char* message = _overhead_limit_exceeded ? "GC overhead limit exceeded" : "Java heap space";
   if (!_thread->in_retryable_allocation()) {
+    oop exception = _overhead_limit_exceeded ?
+        Universe::out_of_memory_error_gc_overhead_limit() :
+        Universe::out_of_memory_error_java_heap();
+    const char* message = java_lang_String::as_utf8_string(java_lang_Throwable::message(exception));
     // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support
-    report_java_out_of_memory(message);
+    report_java_out_of_memory(message, [&]{
+        Handle h_exception(THREAD, exception);
+        java_lang_Throwable::print_stack_trace(h_exception, tty);
+    });
 
     if (JvmtiExport::should_post_resource_exhausted()) {
       JvmtiExport::post_resource_exhausted(
         JVMTI_RESOURCE_EXHAUSTED_OOM_ERROR | JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP,
         message);
     }
-    oop exception = _overhead_limit_exceeded ?
-        Universe::out_of_memory_error_gc_overhead_limit() :
-        Universe::out_of_memory_error_java_heap();
     THROW_OOP_(exception, true);
   } else {
     THROW_OOP_(Universe::out_of_memory_error_retry(), true);

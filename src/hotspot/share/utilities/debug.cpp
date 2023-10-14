@@ -249,6 +249,11 @@ void report_untested(const char* file, int line, const char* message) {
 }
 
 void report_java_out_of_memory(const char* message) {
+  auto nop = []{};
+  report_java_out_of_memory(message, nop);
+}
+
+void report_java_out_of_memory(const char* message, std::function<void()> printout) {
   static int out_of_memory_reported = 0;
 
   // A number of threads may attempt to report OutOfMemoryError at around the
@@ -263,15 +268,18 @@ void report_java_out_of_memory(const char* message) {
     }
 
     if (OnOutOfMemoryError && OnOutOfMemoryError[0]) {
+      printout();
       VMError::report_java_out_of_memory(message);
     }
 
     if (CrashOnOutOfMemoryError) {
+      printout();
       tty->print_cr("Aborting due to java.lang.OutOfMemoryError: %s", message);
       report_fatal(OOM_JAVA_HEAP_FATAL, __FILE__, __LINE__, "OutOfMemory encountered: %s", message);
     }
 
     if (ExitOnOutOfMemoryError) {
+      printout();
       tty->print_cr("Terminating due to java.lang.OutOfMemoryError: %s", message);
       os::_exit(3); // quick exit with no cleanup hooks run
     }
