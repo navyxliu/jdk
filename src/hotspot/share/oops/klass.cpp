@@ -649,7 +649,7 @@ void Klass::set_archived_java_mirror(int mirror_index) {
   _archived_mirror_index = mirror_index;
 }
 #endif // INCLUDE_CDS_JAVA_HEAP
-
+#include "utilities/debug.inline.hpp"
 void Klass::check_array_allocation_length(int length, int max_length, TRAPS) {
   if (length > max_length) {
     if (!THREAD->in_retryable_allocation()) {

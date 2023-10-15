@@ -41,6 +41,7 @@
 #include "services/lowMemoryDetector.hpp"
 #include "utilities/align.hpp"
 #include "utilities/copy.hpp"
+#include "utilities/debug.inline.hpp"
 
 class MemAllocator::Allocation: StackObj {
   friend class MemAllocator;

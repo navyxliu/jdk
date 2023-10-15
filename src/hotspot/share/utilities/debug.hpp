@@ -32,7 +32,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <functional>
 
 class oopDesc;
 
@@ -288,8 +287,6 @@ void warning(const char* format, ...);
 
 #define STATIC_ASSERT(Cond) static_assert((Cond), #Cond)
 
-// out of memory reporting
-void report_java_out_of_memory(const char* message, std::function<void()> printout);
 void report_java_out_of_memory(const char* message);
 
 // Returns true iff the address p is readable and *(intptr_t*)p != errvalue
