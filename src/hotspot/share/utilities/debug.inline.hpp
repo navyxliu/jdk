@@ -1,5 +1,5 @@
 /*
- * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+ * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,8 +33,6 @@
 
 extern int g_out_of_memory_reported;
 // out of memory reporting
-// Function printout writes out extra information before terminating VM.
-//
 template<typename Function>
 void report_java_out_of_memory(const char* message, Function printout) {
   // A number of threads may attempt to report OutOfMemoryError at around the
@@ -49,12 +47,12 @@ void report_java_out_of_memory(const char* message, Function printout) {
     }
 
     if (OnOutOfMemoryError && OnOutOfMemoryError[0]) {
-      printout(); // it's possible that OnOutOfMemoryError is 'kill -9 %p', which kills itself, so we also invoke printout().
+      // It is possible that printout get skipped when the external command kills current VM.
+      // prefer ExitOutOfMemoryError to OnOutOfMemoryError='kill -9 %p'
       VMError::report_java_out_of_memory(message);
     }
 
     if (CrashOnOutOfMemoryError) {
-      printout();
       tty->print_cr("Aborting due to java.lang.OutOfMemoryError: %s", message);
       report_fatal(OOM_JAVA_HEAP_FATAL, __FILE__, __LINE__, "OutOfMemory encountered: %s", message);
     }

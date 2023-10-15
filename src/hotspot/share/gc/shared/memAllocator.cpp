@@ -123,11 +123,11 @@ bool MemAllocator::Allocation::check_out_of_memory() {
   }
 
   if (!_thread->in_retryable_allocation()) {
-    ResourceMark rm;
+    const char* message = _overhead_limit_exceeded ? "GC overhead limit exceeded" : "Java heap space";
     oop exception = _overhead_limit_exceeded ?
         Universe::out_of_memory_error_gc_overhead_limit() :
         Universe::out_of_memory_error_java_heap();
-    const char* message = java_lang_String::as_utf8_string(java_lang_Throwable::message(exception));
+
     // -XX:+HeapDumpOnOutOfMemoryError and -XX:OnOutOfMemoryError support
     report_java_out_of_memory(message, [&]{
         Handle h_exception(THREAD, exception);

@@ -51,6 +51,7 @@
 #include "runtime/arguments.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/handles.inline.hpp"
+#include "utilities/debug.inline.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/powerOfTwo.hpp"
 #include "utilities/stack.inline.hpp"
@@ -649,14 +650,12 @@ void Klass::set_archived_java_mirror(int mirror_index) {
   _archived_mirror_index = mirror_index;
 }
 #endif // INCLUDE_CDS_JAVA_HEAP
-#include "utilities/debug.inline.hpp"
+
 void Klass::check_array_allocation_length(int length, int max_length, TRAPS) {
   if (length > max_length) {
     if (!THREAD->in_retryable_allocation()) {
-      ResourceMark rm;
       oop ex = Universe::out_of_memory_error_array_size();
-      const char* msg = java_lang_String::as_utf8_string(java_lang_Throwable::message(ex));
-      report_java_out_of_memory(msg, [&] {
+      report_java_out_of_memory("Requested array size exceeds VM limit", [&] {
         Handle h_exception(THREAD, ex);
         java_lang_Throwable::print_stack_trace(h_exception, tty);
       });
