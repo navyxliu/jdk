@@ -573,6 +573,24 @@ PEAState& PEAState::operator=(const PEAState& init) {
   return *this;
 }
 
+class TrimIterator {
+  ObjID _preserve;
+
+public:
+  TrimIterator (ObjID id): _preserve(id) {}
+  bool do_entry(ObjID id, ObjectState* os) {
+    return id != _preserve;
+  }
+};
+
+void PEAState::trim(ObjID id) {
+  if (contains(id)) {
+    TrimIterator iter(id);
+    _state.unlink(&iter);
+  } else {
+    clear();
+  }
+}
 void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
@@ -869,6 +887,66 @@ Node* PEAState::get_java_oop(ObjID id) const {
   return obj;
 }
 
+// Passive Materialization
+// ------------------------
+// Materialize an object at the phi node because at least one of its predecessors has materialized the object.
+// https://gist.github.com/navyxliu/d2602d4a4df98f2fb7982cbd3e5ab6eb#solution
+// a. construction a shim
+// b. merge shim
+// c. emit initialization nodes.
+//
+static Node* ensure_object_materialized(GraphKit* kit, Node* var, PEAState& state, SafePointNode* from_map, RegionNode* r, int pnum) {
+  if (!EnablePassiveMaterialization) return var;
+
+  auto* pea = kit->PEA();
+  RegionNode* shim = nullptr;
+  for (uint i = 0; i < r->req(); ++i) {
+      Node* n = r->in(0);
+      if (n->is_Region() && n->as_Region()->is_shim()) {
+        assert(shim == nullptr || shim == n, "more than one shim?");
+        shim = n->as_Region();
+      }
+  }
+
+  Node* mat = nullptr;
+  ObjID id = pea->is_alias(var);
+
+  if (shim == nullptr) {
+    shim = RegionNode::make_shim();
+    shim->add_req(r->in(pnum)); // shim cover r->in(pnum):
+    SafePointNode* sfpt = static_cast<SafePointNode*>(from_map->clone());
+    sfpt->set_req(0, shim);
+    JVMState* jvms = sfpt->jvms();
+    PEAState& as = jvms->alloc_state();
+    as.trim(id);
+
+    GraphKit gk(jvms);
+    mat = as.materialize(&gk, var);
+    sfpt->set_req(TypeFunc::Parms, mat);
+    r->set_req(pnum, mat);
+  } else {
+    SafePointNode* sfpt = nullptr;
+    for (DUIterator_Fast imax, i = shim->fast_outs(imax); i < imax; i++) {
+      Node* node = shim->fast_out(i);
+      if (node->is_SafePoint() && node->outcnt() == 0) {
+        assert(sfpt == nullptr || sfpt == node, "sanity check");
+        sfpt = node->as_SafePoint();
+      }
+    }
+    assert(sfpt != nullptr, "must associate with a SafePoint");
+    shim->add_req(r->in(pnum));
+    int pnum2 = shim->req() - 1;
+    JVMState* jvms = sfpt->jvms();
+    PEAState& as = jvms->alloc_state();
+    ObjectState* os = as.get_object_state(id);
+    os->merge(state.get_object_state(id), kit, shim, pnum2);
+    mat = sfpt->in(TypeFunc::Parms);
+    r->set_req(pnum, mat);
+  }
+
+  return mat;
+}
+
 AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
 
 void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
@@ -950,30 +1028,6 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
 #endif
 }
 
-// Passive Materialization
-// ------------------------
-// Materialize an object at the phi node because at least one of its predecessors has materialized the object.
-// Since C2 PEA does not eliminate the original allocation, we skip passive materializaiton and keep using it.
-// The only problem is partial redudancy. JDK-8287061 should address this issue.
-//
-// PEA split a object based on its escapement. At the merging point, the original object is NonEscape, or it has already
-// been materialized before. the phi is 'reducible Object-Phi' in JDK-828706 and the original object is scalar replaceable!
-//
-// obj' = PHI(Region, OriginalObj, ClonedObj)
-// and OriginalObj is NonEscape but NSR; CloendObj is Global/ArgEscape
-//
-// JDK-8287061 transforms it to =>
-// obj' = PHI(Region, null, ClonedObj)
-// selector = PHI(Region, 0, 1)
-//
-// since OriginalObj is NonEscape, it is replaced by scalars.
-//
-static Node* ensure_object_materialized(Node* var, PEAState& state, SafePointNode* from_map, RegionNode* r, int pnum) {
-  // skip passive materialize for time being.
-  // if JDK-8287061 can guarantee to replace the orignial allocation, we don't need to worry about partial redundancy.
-  return var;
-}
-
 // Merge phi node incrementally.
 // we check all merged inputs in _state.
 // 1. all inputs refer to the same ObjID, then phi is created as alias of ObjID
@@ -1024,7 +1078,10 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
       if (obj != nullptr && _state.contains(obj)) {
         ObjectState* os = _state.get_object_state(obj);
         if (os->is_virtual()) {
-          Node* n = ensure_object_materialized(node, _state, kit->map(), region, pnum);
+          Node* n = ensure_object_materialized(kit, node, _state, kit->map(), region, pnum);
+          if (EnablePassiveMaterialization) {
+            materialized = true;
+          }
           os = _state.escape(obj, n, materialized);
         }
         EscapedState* es = static_cast<EscapedState*>(os);
@@ -1097,7 +1154,6 @@ bool PEAContext::match(ciMethod* method) const {
 
 EscapedState* PEAState::escape(ObjID id, Node* p, bool materialized) {
   assert(p != nullptr, "the new alias must be non-null");
-  Node* old = nullptr;
   EscapedState* es;
 
   if (contains(id)) {

@@ -1015,6 +1015,12 @@ const RegMask &RegionNode::out_RegMask() const {
   return RegMask::Empty;
 }
 
+RegionNode* RegionNode::make_shim() {
+  RegionNode* r = new RegionNode(1);
+  r->_shim = true;
+  return r;
+}
+
 #ifndef PRODUCT
 void RegionNode::dump_spec(outputStream* st) const {
   Node::dump_spec(st);
@@ -3002,4 +3008,3 @@ void BlackholeNode::format(PhaseRegAlloc* ra, outputStream* st) const {
   st->cr();
 }
 #endif
-

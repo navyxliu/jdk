@@ -197,6 +197,7 @@ class PartialEscapeAnalysis : public AnyObj {
   // alias maps from node to ObjID.
   PEAMap<Node*, ObjID>  _aliases;
   GrowableArray<ObjID>  _objects;
+  GrowableArray<RegionNode*> _shims;
 
 public:
   PartialEscapeAnalysis(Arena* arena): _aliases(), _objects(arena, 2, 0, nullptr) {}
@@ -308,6 +309,8 @@ class PEAState {
   void clear() {
     _state.unlink_all();
   }
+  // trim unlink everything except for id.
+  void trim(ObjID id);
 
   // we drop out all virtual objects when we encounter a loop header.
   void mark_all_escaped(PartialEscapeAnalysis* pea, ObjID id, Node *obj);

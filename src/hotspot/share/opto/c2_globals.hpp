@@ -489,6 +489,9 @@
   product(bool, DoPartialEscapeAnalysis, false, EXPERIMENTAL,               \
           "Perform partial escape analysis")                                \
                                                                             \
+  product(bool, EnablePassiveMaterialization, true, EXPERIMENTAL,           \
+          "Do passive materialization")                                     \
+                                                                            \
   product(ccstr, PEAMethodOnly, nullptr, EXPERIMENTAL,                      \
           "perform PEA for only matched methods")                           \
                                                                             \
