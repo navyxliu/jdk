@@ -946,9 +946,6 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   // branch.
   kit.map()->set_replaced_nodes(replaced_nodes);
 
-  PEAState& slow_as = slow_jvms->alloc_state();
-  PEAState& as = new_jvms->alloc_state();
-  AllocationStateMerger as_merger(as);
   // Finish the diamond.
   kit.C->set_has_split_ifs(true); // Has chance for split-if optimization
   RegionNode* region = new RegionNode(3);
@@ -969,6 +966,10 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   }
   uint tos = kit.jvms()->stkoff() + kit.sp();
   uint limit = slow_map->req();
+  PEAState& slow_as = slow_jvms->alloc_state();
+  PEAState& as = new_jvms->alloc_state();
+  AllocationStateMerger as_merger(as, kit.map(), region);
+
   for (uint i = TypeFunc::Parms; i < limit; i++) {
     // Skip unused stack slots; fast forward to monoff();
     if (i == tos) {
@@ -983,13 +984,13 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
       phi->set_req(2, n);
       kit.map()->set_req(i, gvn.transform(phi));
       if (DoPartialEscapeAnalysis) {
-        as_merger.merge_at_phi_creation(kit.PEA(), slow_as, phi->as_Phi(), m, n);
+        as_merger.merge_at_phi_creation(&kit, slow_as, slow_map, 2, phi->as_Phi(), i);
       }
     }
   }
 
   if (DoPartialEscapeAnalysis) {
-    as_merger.merge(slow_as, &kit, region, 2);
+    as_merger.merge(slow_as, &kit, 2);
   }
   return kit.transfer_exceptions_into_jvms();
 }

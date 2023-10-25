@@ -887,6 +887,23 @@ Node* PEAState::get_java_oop(ObjID id) const {
   return obj;
 }
 
+static SafePointNode* attached_sfpt(RegionNode* shim) {
+  SafePointNode* sfpt = nullptr;
+  for (DUIterator_Fast imax, i = shim->fast_outs(imax); i < imax; i++) {
+    Node* node = shim->fast_out(i);
+    if (node->is_SafePoint() && node->outcnt() == 0) {
+        assert(sfpt == nullptr || sfpt == node, "sanity");
+        sfpt = node->as_SafePoint();
+    }
+  }
+  return sfpt;
+}
+
+static bool matched(SafePointNode* sfpt, ObjID id) {
+  PEAState& as = sfpt->jvms()->alloc_state();
+  return as.size() == 1 && as.contains(id);
+}
+
 // Passive Materialization
 // ------------------------
 // Materialize an object at the phi node because at least one of its predecessors has materialized the object.
@@ -894,27 +911,50 @@ Node* PEAState::get_java_oop(ObjID id) const {
 // a. construction a shim
 // b. merge shim
 // c. emit initialization nodes.
-//
-static Node* ensure_object_materialized(GraphKit* kit, Node* var, PEAState& state, SafePointNode* from_map, RegionNode* r, int pnum) {
+// -----
+// Arguments var@ , state@ and map@ are all from the predecessor where object is still virtual
+// r->in(pnum) induces passive materialization.
+Node* PEAState::passive_materialize(GraphKit* kit, Node* var, const PEAState& pred_as, PhiNode* phi, RegionNode* r, int pnum) {
   if (!EnablePassiveMaterialization) return var;
 
   auto* pea = kit->PEA();
+  ObjID id = pea->is_alias(var);
   RegionNode* shim = nullptr;
+  SafePointNode* map = nullptr;
+
   for (uint i = 0; i < r->req(); ++i) {
       Node* n = r->in(0);
       if (n->is_Region() && n->as_Region()->is_shim()) {
-        assert(shim == nullptr || shim == n, "more than one shim?");
-        shim = n->as_Region();
+        SafePointNode* sfpt = attached_sfpt(n->as_Region());
+        if (sfpt != nullptr && matched(sfpt, id)) {
+          shim = n->as_Region();
+          map = sfpt;
+        }
       }
   }
 
   Node* mat = nullptr;
-  ObjID id = pea->is_alias(var);
 
   if (shim == nullptr) {
-    shim = RegionNode::make_shim();
-    shim->add_req(r->in(pnum)); // shim cover r->in(pnum):
-    SafePointNode* sfpt = static_cast<SafePointNode*>(from_map->clone());
+    // there are two cases in shim constrution phase.
+    // a) we materialize obj for current r->in(pnum).
+    // b) we materialize all prior predecessors. it's complement of pnum.
+    bool flag = get_object_state(id)->is_virtual();
+    GrowableArray<int> coverage;
+    if (flag) {
+      coverage.append(pnum);
+    } else {
+      for (uint i=1; i<r->req(); ++i) {
+        if (i == static_cast<uint>(pnum)) continue;
+        Node* n = r->in(i);
+        if (n != nullptr) coverage.append(i);
+      }
+    }
+    shim = RegionNode::make_shim(coverage.length());
+    // cover all merged predecessors except for pnum
+    // since passive materialization never happen before, we can safely assume that all predecessors encounters so far have virtual obj.
+
+    SafePointNode* sfpt = static_cast<SafePointNode*>(map->clone());
     sfpt->set_req(0, shim);
     JVMState* jvms = sfpt->jvms();
     PEAState& as = jvms->alloc_state();
@@ -925,31 +965,24 @@ static Node* ensure_object_materialized(GraphKit* kit, Node* var, PEAState& stat
     sfpt->set_req(TypeFunc::Parms, mat);
     r->set_req(pnum, mat);
   } else {
-    SafePointNode* sfpt = nullptr;
-    for (DUIterator_Fast imax, i = shim->fast_outs(imax); i < imax; i++) {
-      Node* node = shim->fast_out(i);
-      if (node->is_SafePoint() && node->outcnt() == 0) {
-        assert(sfpt == nullptr || sfpt == node, "sanity check");
-        sfpt = node->as_SafePoint();
-      }
-    }
-    assert(sfpt != nullptr, "must associate with a SafePoint");
+    assert(map != nullptr, "must associate with a SafePoint");
     shim->add_req(r->in(pnum));
     int pnum2 = shim->req() - 1;
-    JVMState* jvms = sfpt->jvms();
+    JVMState* jvms = map->jvms();
     PEAState& as = jvms->alloc_state();
     ObjectState* os = as.get_object_state(id);
-    os->merge(state.get_object_state(id), kit, shim, pnum2);
-    mat = sfpt->in(TypeFunc::Parms);
+    os->merge(get_object_state(id), kit, shim, pnum2);
+    mat = map->in(TypeFunc::Parms);
     r->set_req(pnum, mat);
   }
 
   return mat;
 }
 
-AllocationStateMerger::AllocationStateMerger(PEAState& target) : _state(target) {}
+AllocationStateMerger::AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region)
+                                            : _state(target), _map(map), _region(region) {}
 
-void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* region, int pnum) {
+void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, int pnum) {
   PartialEscapeAnalysis* pea = kit->PEA();
   Unique_Node_List set1, set2;
 
@@ -964,7 +997,7 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
     ObjectState* os1 = _state.get_object_state(obj);
     ObjectState* os2 = newin.get_object_state(obj);
     if (os1->is_virtual() && os2->is_virtual()) {
-      os1->merge(os2, kit, region, pnum);
+      os1->merge(os2, kit, _region, pnum);
     } else {
       assert(os1 != nullptr && os2 != nullptr, "sanity check");
       Node* m;
@@ -997,7 +1030,7 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
         materialized = es->has_materialized() || es2->has_materialized();
       }
 
-      if (m->is_Phi() && m->in(0) == region) {
+      if (m->is_Phi() && m->in(0) == _region) {
         ensure_phi(m->as_Phi(), pnum);
         // only update the pnum if we have never seen it before.
         if (m->in(pnum) == nullptr) {
@@ -1005,7 +1038,7 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
         }
       } else if (m != n) {
         const Type* type = obj->oop_type(kit->gvn());
-        Node* phi = PhiNode::make(region, m, type);
+        Node* phi = PhiNode::make(_region, m, type);
         phi->set_req(pnum, n);
         kit->gvn().set_type(phi, type);
         es->update(materialized, phi);
@@ -1018,8 +1051,8 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
   for (uint i = 0; i < map->req(); ++i) {
     Node* node = map->in(i);
 
-    if (node != nullptr && node->is_Phi() && node->as_Phi()->region() == region) {
-      process_phi(node->as_Phi(), kit, region, pnum);
+    if (node != nullptr && node->is_Phi() && node->as_Phi()->region() == _region) {
+      process_phi(node->as_Phi(), kit, pnum);
     }
   }
 
@@ -1033,7 +1066,7 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, RegionNode* re
 // 1. all inputs refer to the same ObjID, then phi is created as alias of ObjID
 // 2. otherwise, any input is alias with a 'virtual' object needs to convert to 'Escaped'. replace input with merged_value.
 // 3. otherwise, if any input is aliased with an Escaped object. replace input with merged value.
-void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode* region, int pnum) {
+void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, int pnum) {
   ObjID unique = nullptr;
   bool materialized = false;
   bool same_obj = true;
@@ -1042,7 +1075,7 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
   if (pea == nullptr) return;
 
   for (uint i = 1; i < phi->req(); ++i) {
-    if (region->in(i) == nullptr || region->in(i)->is_top())
+    if (_region->in(i) == nullptr || _region->in(i)->is_top())
       continue;
 
     Node* node = phi->in(i);
@@ -1070,7 +1103,7 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
     bool printed = false;
 
     for (uint i = 1; i < phi->req(); ++i) {
-      if (region->in(i) == nullptr || region->in(i)->is_top())
+      if (_region->in(i) == nullptr || _region->in(i)->is_top())
         continue;
 
       Node* node = phi->in(i);
@@ -1078,15 +1111,14 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
       if (obj != nullptr && _state.contains(obj)) {
         ObjectState* os = _state.get_object_state(obj);
         if (os->is_virtual()) {
-          Node* n = ensure_object_materialized(kit, node, _state, kit->map(), region, pnum);
-          if (EnablePassiveMaterialization) {
-            materialized = true;
-          }
-          os = _state.escape(obj, n, materialized);
+          // technically speaking, it's wrong to pass _state.
+          // if it needs to generate shim, it will be case 1. therefore, we don't need pred_as.
+          Node* n = _state.passive_materialize(kit, node, _state/*placeholder*/, phi, _region, -1);
+          os = _state.escape(obj, n, EnablePassiveMaterialization || materialized);
         }
         EscapedState* es = static_cast<EscapedState*>(os);
         Node* value = es->merged_value();
-        if (value->is_Phi() && value->in(0) == region) {
+        if (value->is_Phi() && value->in(0) == _region) {
           value = value->in(i);
         }
 
@@ -1112,25 +1144,29 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
   }
 }
 
-void AllocationStateMerger::merge_at_phi_creation(const PartialEscapeAnalysis* pea, PEAState& newin, PhiNode* phi, Node* m, Node* n) {
+void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, int idx) {
+  auto pea = kit->PEA();
+  Node* m = _map->in(idx);
+  Node* n = newin->in(idx);
   ObjID obj1 = pea->is_alias(m);
   ObjID obj2 = pea->is_alias(n);
 
   if (_state.contains(obj1)) { // m points to an object that as is tracking.
     ObjectState* os1 = _state.get_object_state(obj1);
-    ObjectState* os2 = newin.contains(obj2) ? newin.get_object_state(obj2) : nullptr;
+    ObjectState* os2 = pred_as.contains(obj2) ? pred_as.get_object_state(obj2) : nullptr;
 
     // obj1 != obj2 if n points to something else. It could be the other object, null or a ConP.
     // we do nothing here because PEA doesn't create phi in this case.
-    if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is trakcing.
+    if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is tracking the object.
       if (!os1->is_virtual() || !os2->is_virtual()) {
-        if (os2->is_virtual()) {
-          // passive materialize
-          os2 = newin.escape(obj2, n, false);
+        if (os2->is_virtual()) { // obj has been materialized in _state.
+          n = _state.passive_materialize(kit, n, pred_as, phi, _region, pnum);
+          os2 = pred_as.escape(obj2, n, EnablePassiveMaterialization);
         }
 
-        if (os1->is_virtual()) {
-          bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
+        if (os1->is_virtual()) { // obj has been materialized in pred_as.
+          m = _state.passive_materialize(kit, m, pred_as, phi, _region, -1);
+          bool materialized = EnablePassiveMaterialization || static_cast<EscapedState*>(os2)->has_materialized();
           _state.escape(obj1, phi, materialized);
         } else {
           static_cast<EscapedState*>(os1)->update(phi);

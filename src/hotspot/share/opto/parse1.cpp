@@ -1854,7 +1854,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     bool check_elide_phi = target->is_SEL_backedge(save_block);
     PEAState& pred_as = newin->jvms()->alloc_state();
     PEAState& as = block()->state();
-    AllocationStateMerger as_merger(as);
+    AllocationStateMerger as_merger(as, map(), r);
 
     for (uint j = 1; j < newin->req(); ++j) {
       Node* m = map()->in(j);   // Current state of target.
@@ -1892,8 +1892,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               // Becase C2 Parse is merging basic blocks, we have to intercept some phi creation or
               // PEA MergeProcessor creates duplicated phi nodes.
               if (DoPartialEscapeAnalysis && phi != nullptr) {
-                PartialEscapeAnalysis* pea = PEA();
-                as_merger.merge_at_phi_creation(pea, pred_as, phi, m, n);
+                as_merger.merge_at_phi_creation(this, pred_as, newin, pnum, phi, j);
               } // DoPartialEscapeAnalysis
             }
           }
@@ -1928,7 +1927,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
 
     if (DoPartialEscapeAnalysis) {
-      as_merger.merge(pred_as, this, r, pnum);
+      as_merger.merge(pred_as, this, pnum);
     }
 
     if (pnum == PhiNode::Input &&
@@ -2353,15 +2352,15 @@ void Parse::return_current(Node* value) {
     if (DoPartialEscapeAnalysis) {
       PEAState& as =_exits.jvms()->alloc_state();
       PEAState& newin = jvms()->alloc_state();
-      AllocationStateMerger mp(as);
+      AllocationStateMerger mp(as, _exits.map(), _exits.control()->as_Region());
       // if value is a tracking object and PEA needs to create a phi node to merge it,
       // we need to use _exits.argument(0)
       ObjID obj = PEA()->is_alias(value);
       if (as.contains(obj) && newin.contains(obj)) {
         Node* phi = _exits.argument(0);
-        mp.merge_at_phi_creation(PEA(), newin, phi->as_Phi(), phi->in(_first_return-1), value);
+        mp.merge_at_phi_creation(this, newin, map(), _first_return-1, phi->as_Phi(), _exits.jvms()->argoff());
       }
-      mp.merge(newin, &_exits, _exits.control()->as_Region(), _first_return);
+      mp.merge(newin, &_exits, _first_return);
     }
   }
 

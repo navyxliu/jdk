@@ -274,6 +274,7 @@ class PEAState {
   void add_new_allocation(GraphKit* kit, Node* obj);
 
   Node* materialize(GraphKit* kit, Node* var);
+  Node* passive_materialize(GraphKit* kit, Node* var, const PEAState& pred_as, PhiNode* phi, RegionNode* r, int pnum);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 
@@ -329,13 +330,15 @@ class AllocationStateMerger {
  private:
   GrowableArray<ObjID> _live; // live objects
   PEAState& _state;
-  void process_phi(PhiNode* phi, GraphKit* kit, RegionNode* region, int pnum);
+  SafePointNode* _map;
+  RegionNode* _region;
+  void process_phi(PhiNode* phi, GraphKit* kit, int pnum);
 
  public:
-  AllocationStateMerger(PEAState& target);
+  AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region);
   ~AllocationStateMerger(); // purge all objects which are not in live.
-  void merge(PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
-  void merge_at_phi_creation(const PartialEscapeAnalysis* pea, PEAState& newin, PhiNode* phi, Node* m, Node* n);
+  void merge(PEAState& newin, GraphKit* kit, int pnum);
+  void merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, int idx);
 };
 
 void printPeaStatistics();

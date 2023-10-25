@@ -114,7 +114,7 @@ public:
     return _shim;
   }
 
-  static RegionNode* make_shim();
+  static RegionNode* make_shim(int required);
   PhiNode* has_phi() const;        // returns an arbitrary phi user, or null
   PhiNode* has_unique_phi() const; // returns the unique phi user, or null
   // Is this region node unreachable from root?

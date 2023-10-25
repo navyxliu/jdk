@@ -1015,8 +1015,8 @@ const RegMask &RegionNode::out_RegMask() const {
   return RegMask::Empty;
 }
 
-RegionNode* RegionNode::make_shim() {
-  RegionNode* r = new RegionNode(1);
+RegionNode* RegionNode::make_shim(int required) {
+  RegionNode* r = new RegionNode(required);
   r->_shim = true;
   return r;
 }
