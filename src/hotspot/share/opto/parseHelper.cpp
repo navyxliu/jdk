@@ -591,6 +591,7 @@ void PEAState::trim(ObjID id) {
     clear();
   }
 }
+
 void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
@@ -604,7 +605,7 @@ void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
   bool is_obj = is_reference_type(bt);
 
   if (is_obj && pea->is_alias(val)) {
-    // recurse if val is a virtual object.
+    // recurse if val is virtual
     if (as_virtual(pea, val)) {
       materialize(kit, val);
     }
@@ -633,17 +634,12 @@ void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
   kit->access_store_at(objx, adr, adr_type, val, field_type, bt, decorators);
 }
 
-// Because relevant objects may form a directed cyclic graph, materialization is a DFS process.
-// PEA clones the object and marks escaped in allocation state. PEA then iterates all fields
-// and recursively materializes the references which are still aliasing with virtual objects in
-// allocation state.
-Node* PEAState::materialize(GraphKit* kit, Node* var) {
-  Compile* C = kit->C;
-  PartialEscapeAnalysis* pea = C->PEA();
-  ObjID alloc = pea->is_alias(var);
+// clone AllocateNode
+Node* PEAState::clone_object(GraphKit* kit, ObjID alloc) {
+  auto pea = kit->PEA();
+  assert(alloc != nullptr && get_object_state(alloc)->is_virtual(), "sanity check");
   VirtualState* virt = static_cast<VirtualState*>(get_object_state(alloc));
 
-  assert(alloc != nullptr && get_object_state(alloc)->is_virtual(), "sanity check");
 #ifndef PRODUCT
   if (PEAVerbose) {
     tty->print_cr("PEA materializes a virtual %d obj%d ", pea->object_idx(alloc), alloc->_idx);
@@ -651,12 +647,30 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
   Atomic::inc(&peaNumMaterializations);
 #endif
 
-  const TypeOopPtr* oop_type = var->as_Type()->type()->is_oopptr();
-  Node* objx = kit->materialize_object(alloc, oop_type);
+  Node* objx = kit->materialize_object(alloc, virt->type());
+  pea->add_alias(alloc, objx);
+
+#ifndef PRODUCT
+  if (PEAVerbose) {
+    tty->print("new object: ");
+    objx->dump();
+  }
+#endif
+  return objx;
+}
+
+// Because relevant objects may form a directed cyclic graph, materialization is a DFS process.
+// PEA clones the object and marks escaped in allocation state. PEA then iterates all fields
+// and recursively materializes the references which are still aliasing with virtual objects in
+// allocation state.
+Node* PEAState::materialize(GraphKit* kit, Node* var) {
+  PartialEscapeAnalysis* pea = kit->PEA();
+  ObjID alloc = pea->is_alias(var);
+  VirtualState* virt = static_cast<VirtualState*>(get_object_state(alloc));
+  Node* objx = clone_object(kit, alloc);
 
   // we save VirtualState beforehand.
   escape(alloc, objx, true);
-  pea->add_alias(alloc, objx);
 
   if (virt->lockcnt() > 0 && GenerateSynchronizationCode) {
     if (PEAVerbose) {
@@ -667,7 +681,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
     JVMState* jvms = kit->jvms();
     int cnt = 0;
     // It's possible that the locked moninitor is not in the youngest JVMState,
-    // so we have to follow the stacktrace to discover them all.
+    // so we have to walk the stacktrace to discover them all.
     //
     // PEA Materialization steals those monitors from the original object. Here is the scheme:
     // 1. unlock the original object.
@@ -691,13 +705,7 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
 
   kit->replace_in_map(var, objx);
 
-#ifndef PRODUCT
-  if (PEAVerbose) {
-    tty->print("new object: ");
-    objx->dump();
-  }
-#endif
-
+  auto oop_type = virt->type();
   if (oop_type->isa_instptr()) {
     // virt->_oop_type is an exact non-null pointer. oop_type may not be exact, or BOT
     // We check that they both refer to the same java type.
@@ -910,16 +918,19 @@ static bool matched(SafePointNode* sfpt, ObjID id) {
 // https://gist.github.com/navyxliu/d2602d4a4df98f2fb7982cbd3e5ab6eb#solution
 // a. construction a shim
 // b. merge shim
-// c. emit initialization nodes.
+// c. emit initialization nodes(not done in this function)
 // -----
 // Arguments var@ , state@ and map@ are all from the predecessor where object is still virtual
 // r->in(pnum) induces passive materialization.
-Node* PEAState::passive_materialize(GraphKit* kit, Node* var, const PEAState& pred_as, PhiNode* phi, RegionNode* r, int pnum) {
+Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, int pnum) {
   if (!EnablePassiveMaterialization) return var;
 
   auto* pea = kit->PEA();
   ObjID id = pea->is_alias(var);
   RegionNode* shim = nullptr;
+  // stationary map:
+  // because map (role as a local symbol table) is rolling, we need to preserve compile-time state.
+  // it attaches to shim region.
   SafePointNode* map = nullptr;
 
   for (uint i = 0; i < r->req(); ++i) {
@@ -937,33 +948,65 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, const PEAState& pr
 
   if (shim == nullptr) {
     // there are two cases in shim constrution phase.
-    // a) we materialize obj for current r->in(pnum).
-    // b) we materialize all prior predecessors. it's complement of pnum.
-    bool flag = get_object_state(id)->is_virtual();
-    GrowableArray<int> coverage;
-    if (flag) {
-      coverage.append(pnum);
+    // a) base. we materialize obj for current r->in(pnum).
+    // b) we materialize all prior predecessors. it's complement of pnum
+    if (!get_object_state(id)->is_virtual()) {
+      // case-a
+      shim = RegionNode::make_shim(2);
+      shim->set_req(1, r->in(pnum));
+      r->set_req(pnum, shim);
+      kit->gvn().set_type(shim, Type::CONTROL);
+      kit->record_for_igvn(shim);
+
+      map = newin_map->clone()->as_SafePoint();
+      map->set_req(0, shim); // attach to shim!
+      GraphKit shim_kit(map->jvms());
+      mat = newin.materialize(&shim_kit, var);
+      phi->set_req(pnum, mat);
     } else {
+      // case-b:
+      // clone kit->map() because compile-time tuple has not been merged yet, so it is the state of all prior predecessors.
+      // it could only happens right after phi creation in merge_common.
+      // therefore, we should seen the same input except pnum. that's our var.
+      shim = RegionNode::make_shim(1);
       for (uint i=1; i<r->req(); ++i) {
         if (i == static_cast<uint>(pnum)) continue;
         Node* n = r->in(i);
-        if (n != nullptr) coverage.append(i);
+        if (n != nullptr) {
+          shim->add_req(n);
+        }
+      }
+      kit->gvn().set_type(shim, Type::CONTROL);
+      kit->record_for_igvn(shim);
+ 
+      // we haven't merge compile-state yet.
+      map = kit->map()->clone()->as_SafePoint();
+      map->set_req(0, shim); // attach to shim!
+      GraphKit shim_kit(map->jvms());
+
+      // phi is just created by Parse::ensure_phi.
+      // it has not seen by MergeProcessor. we ensure that there's only one value in it.
+      if (pea->is_alias(phi) == nullptr) {
+        var = nullptr;
+        for (uint i=1; i<r->req(); ++i) {
+          Node* t = phi->in(i);
+          if (t != nullptr && t != kit->top()) {
+            assert(var == nullptr || var == t, "sanity check");
+            var = t;
+          }
+        }
+        mat = materialize(&shim_kit, var);
+      } else {
+        assert(pea->is_alias(phi) == id, "sanity");
+        mat = materialize(&shim_kit, phi);
+      }
+      for (uint i = 1; i < r->req(); ++i) {
+        Node* t = phi->in(i);
+        if (t == nullptr || t == kit->top()) continue;
+        phi->set_req(i, mat);
       }
     }
-    shim = RegionNode::make_shim(coverage.length());
-    // cover all merged predecessors except for pnum
-    // since passive materialization never happen before, we can safely assume that all predecessors encounters so far have virtual obj.
-
-    SafePointNode* sfpt = static_cast<SafePointNode*>(map->clone());
-    sfpt->set_req(0, shim);
-    JVMState* jvms = sfpt->jvms();
-    PEAState& as = jvms->alloc_state();
-    as.trim(id);
-
-    GraphKit gk(jvms);
-    mat = as.materialize(&gk, var);
-    sfpt->set_req(TypeFunc::Parms, mat);
-    r->set_req(pnum, mat);
+    map->set_req(TypeFunc::Parms, mat);
   } else {
     assert(map != nullptr, "must associate with a SafePoint");
     shim->add_req(r->in(pnum));
@@ -1111,10 +1154,7 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, int pnum) {
       if (obj != nullptr && _state.contains(obj)) {
         ObjectState* os = _state.get_object_state(obj);
         if (os->is_virtual()) {
-          // technically speaking, it's wrong to pass _state.
-          // if it needs to generate shim, it will be case 1. therefore, we don't need pred_as.
-          Node* n = _state.passive_materialize(kit, node, _state/*placeholder*/, phi, _region, -1);
-          os = _state.escape(obj, n, EnablePassiveMaterialization || materialized);
+          os = _state.escape(obj, node, materialized);
         }
         EscapedState* es = static_cast<EscapedState*>(os);
         Node* value = es->merged_value();
@@ -1144,10 +1184,8 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, int pnum) {
   }
 }
 
-void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, int idx) {
+void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, Node* m, Node* n) {
   auto pea = kit->PEA();
-  Node* m = _map->in(idx);
-  Node* n = newin->in(idx);
   ObjID obj1 = pea->is_alias(m);
   ObjID obj2 = pea->is_alias(n);
 
@@ -1160,12 +1198,12 @@ void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& pred_
     if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is tracking the object.
       if (!os1->is_virtual() || !os2->is_virtual()) {
         if (os2->is_virtual()) { // obj has been materialized in _state.
-          n = _state.passive_materialize(kit, n, pred_as, phi, _region, pnum);
+          n = _state.passive_materialize(kit, n, pred_as, newin, phi, _region, pnum);
           os2 = pred_as.escape(obj2, n, EnablePassiveMaterialization);
         }
 
         if (os1->is_virtual()) { // obj has been materialized in pred_as.
-          m = _state.passive_materialize(kit, m, pred_as, phi, _region, -1);
+          m = _state.passive_materialize(kit, m, pred_as, newin, phi, _region, pnum);
           bool materialized = EnablePassiveMaterialization || static_cast<EscapedState*>(os2)->has_materialized();
           _state.escape(obj1, phi, materialized);
         } else {

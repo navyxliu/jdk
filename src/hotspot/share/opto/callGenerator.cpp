@@ -984,7 +984,7 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
       phi->set_req(2, n);
       kit.map()->set_req(i, gvn.transform(phi));
       if (DoPartialEscapeAnalysis) {
-        as_merger.merge_at_phi_creation(&kit, slow_as, slow_map, 2, phi->as_Phi(), i);
+        as_merger.merge_at_phi_creation(&kit, slow_as, slow_map, 2, phi->as_Phi(), m, n);
       }
     }
   }

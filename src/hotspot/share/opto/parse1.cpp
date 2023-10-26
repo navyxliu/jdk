@@ -1856,7 +1856,8 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     PEAState& as = block()->state();
     AllocationStateMerger as_merger(as, map(), r);
 
-    for (uint j = 1; j < newin->req(); ++j) {
+    // merge in reverse order. when passive materialize happens, compile-tuple (ctrl, io, mem, frameptr, returnaddr) have not been merged.
+    for (uint j = newin->req()-1; j >= 1; --j) {
       Node* m = map()->in(j);   // Current state of target.
       Node* n = newin->in(j);   // Incoming change to target state.
       PhiNode* phi;
@@ -1892,7 +1893,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               // Becase C2 Parse is merging basic blocks, we have to intercept some phi creation or
               // PEA MergeProcessor creates duplicated phi nodes.
               if (DoPartialEscapeAnalysis && phi != nullptr) {
-                as_merger.merge_at_phi_creation(this, pred_as, newin, pnum, phi, j);
+                as_merger.merge_at_phi_creation(this, pred_as, newin, pnum, phi, m, n);
               } // DoPartialEscapeAnalysis
             }
           }
@@ -2358,7 +2359,7 @@ void Parse::return_current(Node* value) {
       ObjID obj = PEA()->is_alias(value);
       if (as.contains(obj) && newin.contains(obj)) {
         Node* phi = _exits.argument(0);
-        mp.merge_at_phi_creation(this, newin, map(), _first_return-1, phi->as_Phi(), _exits.jvms()->argoff());
+        mp.merge_at_phi_creation(this, newin, map(), _first_return, phi->as_Phi(), phi->in(_first_return-1), value);
       }
       mp.merge(newin, &_exits, _first_return);
     }

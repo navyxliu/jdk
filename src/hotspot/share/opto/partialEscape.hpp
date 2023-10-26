@@ -81,7 +81,9 @@ class VirtualState: public ObjectState {
   int nfields() const;
   void set_field(ciField* field, Node* val);
   Node* get_field(ciField* field) const;
-
+  const TypeOopPtr* type() const {
+    return _oop_type;
+  }
   ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) override;
 
   void lock_inc() { _lockcnt++; }
@@ -244,6 +246,9 @@ class PEAState {
   friend class Parse;
   PEAMap<ObjID, ObjectState*> _state;
 
+ protected:
+  Node* clone_object(GraphKit* kit, ObjID alloc);
+
  public:
   PEAState& operator=(const PEAState& init);
 
@@ -274,7 +279,7 @@ class PEAState {
   void add_new_allocation(GraphKit* kit, Node* obj);
 
   Node* materialize(GraphKit* kit, Node* var);
-  Node* passive_materialize(GraphKit* kit, Node* var, const PEAState& pred_as, PhiNode* phi, RegionNode* r, int pnum);
+  Node* passive_materialize(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, int pnum);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 
@@ -338,7 +343,7 @@ class AllocationStateMerger {
   AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region);
   ~AllocationStateMerger(); // purge all objects which are not in live.
   void merge(PEAState& newin, GraphKit* kit, int pnum);
-  void merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, int idx);
+  void merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, Node* m, Node* n);
 };
 
 void printPeaStatistics();
