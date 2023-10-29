@@ -315,8 +315,6 @@ class PEAState {
   void clear() {
     _state.unlink_all();
   }
-  // trim unlink everything except for id.
-  void trim(ObjID id);
 
   // we drop out all virtual objects when we encounter a loop header.
   void mark_all_escaped(PartialEscapeAnalysis* pea, ObjID id, Node *obj);

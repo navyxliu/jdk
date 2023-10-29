@@ -573,25 +573,6 @@ PEAState& PEAState::operator=(const PEAState& init) {
   return *this;
 }
 
-class TrimIterator {
-  ObjID _preserve;
-
-public:
-  TrimIterator (ObjID id): _preserve(id) {}
-  bool do_entry(ObjID id, ObjectState* os) {
-    return id != _preserve;
-  }
-};
-
-void PEAState::trim(ObjID id) {
-  if (contains(id)) {
-    TrimIterator iter(id);
-    _state.unlink(&iter);
-  } else {
-    clear();
-  }
-}
-
 void PEAState::put_field(GraphKit* kit, ciField* field, Node* objx, Node* val) {
   Compile* C = kit->C;
   PartialEscapeAnalysis* pea = C->PEA();
