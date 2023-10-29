@@ -954,7 +954,6 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
       // case-a
       shim = RegionNode::make_shim(2);
       shim->set_req(1, r->in(pnum));
-      r->set_req(pnum, shim);
       kit->gvn().set_type(shim, Type::CONTROL);
       kit->record_for_igvn(shim);
 
@@ -963,23 +962,23 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
       GraphKit shim_kit(map->jvms());
       mat = newin.materialize(&shim_kit, var);
       phi->set_req(pnum, mat);
+      r->set_req(pnum, shim_kit.control());
     } else {
       // case-b:
-      // clone kit->map() because compile-time tuple has not been merged yet, so it is the state of all prior predecessors.
-      // it could only happens right after phi creation in merge_common.
-      // therefore, we should seen the same input except pnum. that's our var.
       shim = RegionNode::make_shim(1);
+      GrowableArray<uint> paths;
+
       for (uint i=1; i<r->req(); ++i) {
         if (i == static_cast<uint>(pnum)) continue;
         Node* n = r->in(i);
         if (n != nullptr) {
+          paths.append(i);
           shim->add_req(n);
         }
       }
       kit->gvn().set_type(shim, Type::CONTROL);
       kit->record_for_igvn(shim);
- 
-      // we haven't merge compile-state yet.
+
       map = kit->map()->clone()->as_SafePoint();
       map->set_req(0, shim); // attach to shim!
       GraphKit shim_kit(map->jvms());
@@ -1000,10 +999,14 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
         assert(pea->is_alias(phi) == id, "sanity");
         mat = materialize(&shim_kit, phi);
       }
+
       for (uint i = 1; i < r->req(); ++i) {
+        if (i == static_cast<uint>(pnum)) continue;
+
         Node* t = phi->in(i);
         if (t == nullptr || t == kit->top()) continue;
         phi->set_req(i, mat);
+        r->set_req(i, shim_kit.control());
       }
     }
     map->set_req(TypeFunc::Parms, mat);
@@ -1025,7 +1028,7 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
 AllocationStateMerger::AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region)
                                             : _state(target), _map(map), _region(region) {}
 
-void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, int pnum) {
+void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum) {
   PartialEscapeAnalysis* pea = kit->PEA();
   Unique_Node_List set1, set2;
 
@@ -1057,8 +1060,8 @@ void AllocationStateMerger::merge(PEAState& newin, GraphKit* kit, int pnum) {
         n = es2->merged_value();
         es = _state.escape(obj, m, materialized);
       } else if (os2->is_virtual()) {
-        // If obj is virtual in newin,  it must be escaped in current state.
-        // Mark it escaped  in newin
+        // If obj is virtual in newin, it must be escaped in current state.
+        // Mark it escaped in newin
         es = static_cast<EscapedState*>(os1);
         materialized = es->has_materialized();
         m = es->merged_value();
@@ -1184,27 +1187,25 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, int pnum) {
   }
 }
 
-void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& pred_as, SafePointNode* newin, int pnum, PhiNode* phi, Node* m, Node* n) {
+void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum, PhiNode* phi, Node* m, Node* n) {
   auto pea = kit->PEA();
   ObjID obj1 = pea->is_alias(m);
   ObjID obj2 = pea->is_alias(n);
 
   if (_state.contains(obj1)) { // m points to an object that as is tracking.
     ObjectState* os1 = _state.get_object_state(obj1);
-    ObjectState* os2 = pred_as.contains(obj2) ? pred_as.get_object_state(obj2) : nullptr;
+    ObjectState* os2 = newin.contains(obj2) ? newin.get_object_state(obj2) : nullptr;
 
     // obj1 != obj2 if n points to something else. It could be the other object, null or a ConP.
     // we do nothing here because PEA doesn't create phi in this case.
     if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is tracking the object.
       if (!os1->is_virtual() || !os2->is_virtual()) {
         if (os2->is_virtual()) { // obj has been materialized in _state.
-          n = _state.passive_materialize(kit, n, pred_as, newin, phi, _region, pnum);
-          os2 = pred_as.escape(obj2, n, EnablePassiveMaterialization);
+          os2 = newin.escape(obj2, n, false);
         }
 
-        if (os1->is_virtual()) { // obj has been materialized in pred_as.
-          m = _state.passive_materialize(kit, m, pred_as, newin, phi, _region, pnum);
-          bool materialized = EnablePassiveMaterialization || static_cast<EscapedState*>(os2)->has_materialized();
+        if (os1->is_virtual()) { // obj has been materialized in newin
+          bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
           _state.escape(obj1, phi, materialized);
         } else {
           static_cast<EscapedState*>(os1)->update(phi);

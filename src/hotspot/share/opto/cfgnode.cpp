@@ -518,6 +518,34 @@ bool RegionNode::is_diamond() const {
   }
   return true;
 }
+
+class NodeChanger : public StackObj {
+  PhaseIterGVN* _igvn;
+  Node*         _node;
+  bool          _changed = false;
+
+public:
+  NodeChanger(PhaseIterGVN* igvn, Node* node) : _igvn(igvn), _node(node) {
+    assert(_igvn != nullptr, "only used this when can_reshape is true");
+  }
+  void del_req(uint idx) {
+    if (!_changed) {
+      _igvn->rehash_node_delayed(_node);
+      _changed = true;
+    }
+    _node->set_req_X(idx, nullptr, _igvn);
+    _node->del_req(idx);
+  }
+
+  void set_req(uint idx, Node* n) {
+    if (!_changed) {
+      _igvn->rehash_node_delayed(_node);
+      _changed = true;
+    }
+    _node->set_req_X(idx, n, _igvn);
+  }
+};
+
 //------------------------------Ideal------------------------------------------
 // Return a node which is more "ideal" than the current node.  Must preserve
 // the CFG, but we can still strip out dead paths.
@@ -552,7 +580,97 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
       }
     }
   }
+#if 0
+  if (_shim && can_reshape) {
+    Node* out = nullptr;
+    PhaseIterGVN *igvn = phase->is_IterGVN();
 
+    for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
+      Node* n = fast_out(i);
+      if (n == this) continue;
+      else if (n->is_Region()) {
+        assert(out == nullptr || out == n, "only support single shim");
+        out = n;
+      }
+    }
+    assert(out != nullptr, "must have a region in outs");
+
+    GrowableArray<uint> paths;
+    for (uint i = 1; i < out->req(); ++i) {
+      if (out->in(i) == this) {
+        paths.push(i);
+      }
+    }
+
+    if (paths.length() > 1) {
+      // if the shim covers multiple paths, we need to squeeze outs.
+      // shim region is incompabile with Cliff's GCM(in neither LoopOpts nor CodeGen)
+      //
+      //   | |
+      // +-----------+
+      // | this(shim)|
+      // +-----------+
+      //   | |
+      // +------+
+      // | out  |
+      // +------+
+      //    |
+      //    +-------+-------+
+      //            | phi   |
+      //            +-------+
+      //
+      // After simplification
+      //   | |
+      // +--------+
+      // | this   |
+      // +--------+
+      //   |   |
+      //   |   +----+-------+
+      //   |        | phi   |
+      //   |        +-------+
+      // +------+
+      // | out  |
+      // +------+
+      //
+      // paths are the inputs of out. we keep input #paths[0]. other inputs are deleted in reverse order.
+      for (DUIterator_Fast imax, i = out->fast_outs(imax); i < imax; i++) {
+        Node* phi = out->fast_out(i);
+
+        if (phi != nullptr && phi->is_Phi()) {
+          uint idx = paths.at(0);
+          Node* m = phi->in(idx);
+          const Type* type = phase->type(phi);
+          NodeChanger changer(igvn, phi);
+
+          for (int j = paths.length()-1; j >= 1; --j) {
+            idx = paths.at(j);
+            Node* n = phi->in(idx);
+            if (m != n) {
+              if (m == nullptr || !m->is_Phi()) {
+                m = PhiNode::make(this, m, type, phi->adr_type());
+                phase->set_type(m, type);
+              }
+              m->set_req(j + 1, n);
+            }
+            changer.del_req(idx);
+          }
+          idx = paths.at(0);
+          if (phi->in(idx) != m) {
+            changer.set_req(idx, m);
+          }
+        }
+      }
+
+      NodeChanger nc(igvn, out);
+      for (int j = paths.length()-1; j >= 1; --j) {
+        int idx = paths.at(j);
+        nc.del_req(idx);
+      }
+    }
+    _shim = false;
+    return this; // record progress
+  }
+#endif
   // Remove TOP or null input paths. If only 1 input path remains, this Region
   // degrades to a copy.
   bool add_to_worklist = true;
@@ -1033,6 +1151,9 @@ void RegionNode::dump_spec(outputStream* st) const {
     break;
   case RegionNode::LoopStatus::NeverIrreducibleEntry:
     break; // nothing
+  }
+  if (_shim) {
+    st->print("[shim]");
   }
 }
 #endif

@@ -990,7 +990,7 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   }
 
   if (DoPartialEscapeAnalysis) {
-    as_merger.merge(slow_as, &kit, 2);
+    as_merger.merge(&kit, slow_as, slow_map, 2);
   }
   return kit.transfer_exceptions_into_jvms();
 }

@@ -1856,8 +1856,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     PEAState& as = block()->state();
     AllocationStateMerger as_merger(as, map(), r);
 
-    // merge in reverse order. when passive materialize happens, compile-tuple (ctrl, io, mem, frameptr, returnaddr) have not been merged.
-    for (uint j = newin->req()-1; j >= 1; --j) {
+    for (uint j = 1; j < newin->req(); ++j) {
       Node* m = map()->in(j);   // Current state of target.
       Node* n = newin->in(j);   // Incoming change to target state.
       PhiNode* phi;
@@ -1928,7 +1927,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
 
     if (DoPartialEscapeAnalysis) {
-      as_merger.merge(pred_as, this, pnum);
+      as_merger.merge(this, pred_as, newin, pnum);
     }
 
     if (pnum == PhiNode::Input &&
@@ -2361,7 +2360,7 @@ void Parse::return_current(Node* value) {
         Node* phi = _exits.argument(0);
         mp.merge_at_phi_creation(this, newin, map(), _first_return, phi->as_Phi(), phi->in(_first_return-1), value);
       }
-      mp.merge(newin, &_exits, _first_return);
+      mp.merge(&_exits, newin, map(), _first_return);
     }
   }
 
