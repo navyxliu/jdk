@@ -95,6 +95,21 @@ class VirtualState: public ObjectState {
     return _lockcnt;
   }
 
+  bool equals(const VirtualState* rhs) {
+    if (this != rhs) {
+      if (_lockcnt != rhs->_lockcnt) return false;
+      if (_oop_type != rhs->_oop_type) return false;
+      int n = nfields();
+      if (n != rhs->nfields()) return false;
+      for (int i = 0; i < n; ++i) {
+        if (_entries[i] != rhs->_entries[i]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
 #ifndef PRODUCT
   void print_on(outputStream* os) const;
 #endif
@@ -279,7 +294,10 @@ class PEAState {
   void add_new_allocation(GraphKit* kit, Node* obj);
 
   Node* materialize(GraphKit* kit, Node* var);
+  // passive_materialize case-a
   Node* passive_materialize(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, int pnum);
+  // passive materialize case-b
+  Node* passive_materialize_for_predecessors(GraphKit* kit, Node* var, PhiNode* phi, RegionNode* r, int pnum);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 
@@ -310,6 +328,17 @@ class PEAState {
       }
     }
     return nullptr;
+  }
+
+  bool equals(ObjID id, const VirtualState* rhs) const {
+    if (contains(id)) {
+      ObjectState* os = get_object_state(id);
+      if (os->is_virtual()) {
+        VirtualState* vs = static_cast<VirtualState*>(os);
+        return vs->equals(rhs);
+      }
+    }
+    return false;
   }
 
   void clear() {
