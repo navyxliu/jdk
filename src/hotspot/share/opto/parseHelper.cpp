@@ -567,9 +567,6 @@ PEAState& PEAState::operator=(const PEAState& init) {
     });
   }
 
-#ifdef ASSERT
-    validate();
-#endif
   return *this;
 }
 
@@ -747,9 +744,6 @@ Node* PEAState::materialize(GraphKit* kit, Node* var) {
     assert(false, "array not support yet!");
   }
 
-#ifdef ASSERT
-  validate();
-#endif
   return objx;
 }
 
@@ -774,11 +768,6 @@ void PEAState::print_on(outputStream* os) const {
   });
 }
 
-#endif
-
-#ifdef ASSERT
-void PEAState::validate() const {
-}
 #endif
 
 bool safepointContains(SafePointNode* sfpt, Node *oop) {
@@ -1147,10 +1136,6 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
       process_phi(node->as_Phi(), kit, pnum);
     }
   }
-
-#ifdef ASSERT
-  _state.validate();
-#endif
 }
 
 // Merge phi node incrementally.

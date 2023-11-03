@@ -1807,9 +1807,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     // Convert the existing Parser mapping into a mapping at this bci.
     store_state_to(target, pnum);
     assert(target->is_merged(), "do not come here twice");
-#ifdef ASSERT
-    target->state().validate();
-#endif
   } else {                      // Prior mapping at this bci
 
 #ifdef ASSERT
@@ -1938,9 +1935,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
     map()->merge_replaced_nodes_with(newin);
 
-#ifdef ASSERT
-    block()->state().validate();
-#endif
     // newin has been subsumed into the lazy merge, and is now dead.
     set_block(save_block);
 
