@@ -1231,15 +1231,9 @@ void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& newin
     // we do nothing here because PEA doesn't create phi in this case.
     if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is tracking the object.
       if (!os1->is_virtual() || !os2->is_virtual()) {
-        if (os2->is_virtual()) { // obj has been materialized in _state.
-          n = _state.passive_materialize(kit, n, newin, newin_map, phi, _region, pnum);
-          os2 = newin.escape(obj2, n, EnablePassiveMaterialization);
-        }
-
-        if (os1->is_virtual()) { // obj has been materialized in newin
-          //bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
-          m = _state.passive_materialize_for_predecessors(kit, m, phi, _region, pnum);
-          _state.escape(obj1, phi, EnablePassiveMaterialization);
+        if (os1->is_virtual()) {
+          bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
+          _state.escape(obj1, phi, materialized);
         } else {
           static_cast<EscapedState*>(os1)->update(phi);
         }
