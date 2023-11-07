@@ -1906,7 +1906,21 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
         assert(phi->region() == r, "");
 
         phi->set_req(pnum, n);  // Then add 'n' to the merge
-        if (pnum == PhiNode::Input) {
+      }
+    } // End of for all values to be merged
+
+
+    if (DoPartialEscapeAnalysis) {
+      as_merger.merge(this, pred_as, newin, pnum);
+    }
+
+    if (pnum == PhiNode::Input) {
+      for (uint j = 1; j < newin->req(); ++j) {
+        Node* n = map()->in(j);
+
+        if (n->is_Phi() && n->in(0) == r) {
+          PhiNode* phi = n->as_Phi();
+
           // Last merge for this Phi.
           // So far, Phis have had a reasonable type from ciTypeFlow.
           // Now _gvn will join that with the meet of current inputs.
@@ -1920,17 +1934,11 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           record_for_igvn(phi);
         }
       }
-    } // End of for all values to be merged
 
-
-    if (DoPartialEscapeAnalysis) {
-      as_merger.merge(this, pred_as, newin, pnum);
-    }
-
-    if (pnum == PhiNode::Input &&
-        !r->in(0)) {         // The occasional useless Region
-      assert(control() == r, "");
-      set_control(r->nonnull_req());
+      if (r->in(0) == nullptr) { // The occasional useless Region
+        assert(control() == r, "");
+        set_control(r->nonnull_req());
+      }
     }
 
     map()->merge_replaced_nodes_with(newin);
