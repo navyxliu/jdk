@@ -297,7 +297,7 @@ class PEAState {
   // passive_materialize case-a
   Node* passive_materialize(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum);
   // passive materialize case-b
-  Node* passive_materialize_for_predecessors(GraphKit* kit, Node* var, PhiNode* phi, RegionNode* r, uint pnum);
+  Node* passive_materialize_for_predecessors(GraphKit* kit, Node* var, RegionNode* r, uint pnum);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 

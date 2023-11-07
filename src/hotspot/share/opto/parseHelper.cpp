@@ -955,18 +955,15 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
   return retval;
 }
 
-Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, PhiNode* phi, RegionNode* r, uint pnum) {
+Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, RegionNode* r, uint pnum) {
   if (!EnablePassiveMaterialization) return var;
-  tty->print_cr("[passive_materialize_for_predecessors] ");
+  //tty->print_cr("[passive_materialize_for_predecessors] ");
 
   auto* pea = kit->PEA();
   ObjID id = pea->is_alias(var);
-  RegionNode* shim = nullptr;
-  SafePointNode* map = nullptr;
 
-  shim = RegionNode::make_shim(1);
+  RegionNode* shim = RegionNode::make_shim(1);
   GrowableArray<uint> paths;
-  Node* mat = nullptr;
 
   for (uint i=1; i<r->req(); ++i) {
     if (i == pnum) continue;
@@ -979,13 +976,13 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, P
   kit->gvn().set_type(shim, Type::CONTROL);
   kit->record_for_igvn(shim);
 
-  map = kit->map()->clone()->as_SafePoint();
+  SafePointNode* map = kit->map()->clone()->as_SafePoint();
   map->set_req(0, shim); // attach to shim!
   GraphKit shim_kit(map->jvms());
   bool unique = paths.length() <= 1;
 
-  // shim only covers paths. we have to select paths if map->in(i) is phi.
-  for (uint i =1; i<map->req(); ++i) {
+  // shim only covers selective paths, so we have to rewrite inputs if they are phi nodes.
+  for (uint i = 1; i < map->req(); ++i) {
     Node* n = map->in(i);
 
     if (i == TypeFunc::Memory && n->is_MergeMem()) {
@@ -1029,34 +1026,34 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, P
     }
   }
 
-  // phi is just created by Parse::ensure_phi.
-  // it has not seen by MergeProcessor. we ensure that there's only one value in it.
-  if (pea->is_alias(phi) == nullptr) {
-    var = nullptr;
-    for (uint i=1; i<r->req(); ++i) {
-      if (i == pnum) continue;
-      Node* t = phi->in(i);
-      if (t != nullptr && t != kit->top()) {
-        assert(var == nullptr || var == t, "sanity check");
-        var = t;
+  Node* mat = materialize(&shim_kit, var);
+
+  // after materialization, we need to update the current map.
+  SafePointNode* current_map = kit->map();
+  // merge control.
+  for (int j = 0; j < paths.length(); ++j) {
+    r->set_req(paths.at(j), shim_kit.control());
+  }
+  // if we have already created phi nodes, update the corresponding paths.
+  // if we don't created phi node yet, just overwrite them.
+  for (uint i = 1; i < current_map->req(); ++i) {
+    Node* n = current_map->in(i);
+    if (i == TypeFunc::Memory && n->is_MergeMem()) {
+      for (int j = 0; j < paths.length(); ++j) {
+        int idx = paths.at(j);
+        kit->merge_memory(map->in(i), r, idx);;
       }
+    } else if (n->is_Phi() && n->in(0) == r) {
+      PhiNode* phi = n->as_Phi();
+      for (int j = 0; j < paths.length(); ++j) {
+          int idx = paths.at(j);
+          n->set_req(idx, map->in(i));
+      }
+    } else if (n != map->in(i)) {
+      current_map->set_req(i, map->in(i));
     }
-    mat = materialize(&shim_kit, var);
-  } else {
-    assert(pea->is_alias(phi) == id, "sanity");
-    mat = materialize(&shim_kit, phi);
   }
 
-  for (uint i = 1; i < r->req(); ++i) {
-    if (i == pnum) continue;
-
-    Node* t = phi->in(i);
-    if (t == nullptr || t == kit->top()) continue;
-    phi->set_req(i, mat);
-    r->set_req(i, shim_kit.control());
-  }
-
-  map->set_req(TypeFunc::Parms, mat);
   return mat;
 }
 
@@ -1232,8 +1229,13 @@ void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& newin
     if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is tracking the object.
       if (!os1->is_virtual() || !os2->is_virtual()) {
         if (os1->is_virtual()) {
-          bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
-          _state.escape(obj1, phi, materialized);
+          if (m == _state.passive_materialize_for_predecessors(kit, m, _region, pnum)) {
+            bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
+            _state.escape(obj1, phi, materialized);
+          } else {
+            assert(!_state.get_object_state(obj1)->is_virtual(), "must be escaped after passive materialization");
+            static_cast<EscapedState*>(_state.get_object_state(obj1))->update(phi);
+          }
         } else {
           static_cast<EscapedState*>(os1)->update(phi);
         }

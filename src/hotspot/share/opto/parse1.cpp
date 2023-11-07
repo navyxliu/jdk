@@ -1853,7 +1853,9 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     PEAState& as = block()->state();
     AllocationStateMerger as_merger(as, map(), r);
 
-    for (uint j = 1; j < newin->req(); ++j) {
+    // passive materialization alter memory, and merge_memory_edge() will lock down phi nodes of memory.
+    // we work around this issue by merging in reversing order.
+    for (uint j = newin->req()-1; j >= 1; --j) {
       Node* m = map()->in(j);   // Current state of target.
       Node* n = newin->in(j);   // Incoming change to target state.
       PhiNode* phi;
@@ -1915,6 +1917,8 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     }
 
     if (pnum == PhiNode::Input) {
+      // This logic ignores j = TypeFunc::Memory on purpose.
+      // phi nodes in MergedMemory are locked down in merge_memory_edges().
       for (uint j = 1; j < newin->req(); ++j) {
         Node* n = map()->in(j);
 
