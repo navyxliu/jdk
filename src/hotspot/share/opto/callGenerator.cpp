@@ -955,15 +955,7 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   Node* iophi = PhiNode::make(region, kit.i_o(), Type::ABIO);
   iophi->set_req(2, slow_map->i_o());
   kit.set_i_o(gvn.transform(iophi));
-  // Merge memory
-  kit.merge_memory(slow_map->merged_memory(), region, 2);
-  // Transform new memory Phis.
-  for (MergeMemStream mms(kit.merged_memory()); mms.next_non_empty();) {
-    Node* phi = mms.memory();
-    if (phi->is_Phi() && phi->in(0) == region) {
-      mms.set_memory(gvn.transform(phi));
-    }
-  }
+
   uint tos = kit.jvms()->stkoff() + kit.sp();
   uint limit = slow_map->req();
   PEAState& slow_as = slow_jvms->alloc_state();
@@ -991,6 +983,15 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
 
   if (DoPartialEscapeAnalysis) {
     as_merger.merge(&kit, slow_as, slow_map, 2);
+  }
+  // Merge memory
+  kit.merge_memory(slow_map->merged_memory(), region, 2);
+  // Transform new memory Phis.
+  for (MergeMemStream mms(kit.merged_memory()); mms.next_non_empty();) {
+    Node* phi = mms.memory();
+    if (phi->is_Phi() && phi->in(0) == region) {
+      mms.set_memory(gvn.transform(phi));
+    }
   }
   return kit.transfer_exceptions_into_jvms();
 }

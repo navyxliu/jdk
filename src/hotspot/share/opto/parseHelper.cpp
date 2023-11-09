@@ -961,6 +961,7 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
 
   auto* pea = kit->PEA();
   ObjID id = pea->is_alias(var);
+  PhaseGVN& gvn = kit->gvn();
 
   RegionNode* shim = RegionNode::make_shim(1);
   GrowableArray<uint> paths;
@@ -973,7 +974,7 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
       shim->add_req(n);
     }
   }
-  kit->gvn().set_type(shim, Type::CONTROL);
+  gvn.set_type(shim, Type::CONTROL);
   kit->record_for_igvn(shim);
 
   SafePointNode* map = kit->map()->clone()->as_SafePoint();
@@ -1001,7 +1002,7 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
               int idx = paths.at(j);
               phi->set_req(j + 1, p->in(idx));
             }
-            kit->gvn().set_type(phi, Type::MEMORY);
+            gvn.set_type(phi, Type::MEMORY);
             new_mem->set_req(mms.alias_idx(), kit->gvn().transform(phi));
           }
         } else {
@@ -1013,14 +1014,13 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
       if (unique) {
         map->set_req(i, n->in(paths.at(0)));
       } else {
-        PhaseGVN& gvn = kit->gvn();
         const Type* type = gvn.type(n);
         PhiNode* phi = PhiNode::make(shim, nullptr, type, n->adr_type());
         for (int j =0; j < paths.length(); ++j) {
           int idx = paths.at(j);
           phi->set_req(j + 1, n->in(idx));
         }
-        kit->gvn().set_type(phi, type);
+        gvn.set_type(phi, type);
         map->set_req(i, gvn.transform(phi));
       }
     }
@@ -1041,13 +1041,16 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
     if (i == TypeFunc::Memory && n->is_MergeMem()) {
       for (int j = 0; j < paths.length(); ++j) {
         int idx = paths.at(j);
-        kit->merge_memory(map->in(i), r, idx);;
+        kit->merge_memory(map->in(i), r, idx);
       }
     } else if (n->is_Phi() && n->in(0) == r) {
-      PhiNode* phi = n->as_Phi();
+      bool in_table = gvn.hash_delete(n);
       for (int j = 0; j < paths.length(); ++j) {
           int idx = paths.at(j);
           n->set_req(idx, map->in(i));
+      }
+      if (in_table) {
+        gvn.hash_find_insert(n);
       }
     } else if (n != map->in(i)) {
       current_map->set_req(i, map->in(i));
