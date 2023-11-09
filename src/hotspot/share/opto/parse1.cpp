@@ -2364,7 +2364,7 @@ void Parse::return_current(Node* value) {
       ObjID obj = PEA()->is_alias(value);
       if (as.contains(obj) && newin.contains(obj)) {
         Node* phi = _exits.argument(0);
-        mp.merge_at_phi_creation(this, newin, map(), _first_return, phi->as_Phi(), phi->in(_first_return-1), value);
+        mp.merge_at_phi_creation(&_exits, newin, map(), _first_return, phi->as_Phi(), phi->in(_first_return-1), value);
       }
       mp.merge(&_exits, newin, map(), _first_return);
     }
