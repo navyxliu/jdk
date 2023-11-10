@@ -703,6 +703,10 @@ void Parse::do_all_blocks() {
       }
 
       NOT_PRODUCT(blocks_parsed++);
+      if (DoPartialEscapeAnalysis && block->is_loop_head()) {
+        PEAState& as = jvms()->alloc_state();
+        as.mark_all_live_objects_escaped(PEA(), block->start_map());
+      }
 
       progress = true;
       if (block->is_loop_head() || block->is_handler() || (has_irreducible && !block->is_ready())) {
@@ -734,11 +738,6 @@ void Parse::do_all_blocks() {
 
         // Leave behind an undisturbed copy of the map, for future merges.
         set_map(clone_map());
-
-        if (DoPartialEscapeAnalysis && block->is_loop_head()) {
-          PEAState& as = jvms()->alloc_state();
-          as.mark_all_live_objects_escaped(PEA(), block->start_map());
-        }
       }
 
       if (control()->is_Region() && !block->is_loop_head() && !has_irreducible && !block->is_handler()) {
@@ -2152,6 +2151,12 @@ PhiNode *Parse::ensure_phi(int idx, bool nocreate) {
   PhiNode* phi = PhiNode::make(region, o, t);
   gvn().set_type(phi, t);
   if (C->do_escape_analysis()) record_for_igvn(phi);
+  if (DoPartialEscapeAnalysis) {
+    ObjID id = PEA()->is_alias(o);
+    if (id != nullptr) {
+      PEA()->add_alias(id, phi);
+    }
+  }
   map->set_req(idx, phi);
 
   return phi;
