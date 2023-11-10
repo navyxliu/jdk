@@ -353,9 +353,11 @@ class PEAState {
   void print_on(outputStream* os) const;
 #endif
 
-#ifdef ASSERT
-  void validate() const;
-#endif
+protected:
+  using ObjColorTable = ResourceHashtable<ObjID, bool, 23, /*table_size*/
+                                 AnyObj::RESOURCE_AREA, mtCompiler>;
+
+  void dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
 };
 
 class AllocationStateMerger {

@@ -882,6 +882,40 @@ static bool matched(SafePointNode* sfpt, ObjID id, VirtualState* vs) {
   return as.contains(id) && as.equals(id, vs);
 }
 
+void PEAState::dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths) {
+  if (color.contains(key)) return;
+  color.put(key, true);
+
+  auto pea = kit->PEA();
+  for (auto&& it = vs->field_iterator(); it.has_next(); ++it) {
+      ciField* field = it.field();
+      Node* val = it.value();
+      if (val == nullptr) continue;
+
+      BasicType bt = field->layout_type();
+      const Type* type = Type::get_const_basic_type(bt);
+      bool is_obj = is_reference_type(bt);
+
+      if (is_obj && pea->is_alias(val)) {
+        VirtualState* vs_field = as_virtual(pea, val);
+        if (vs_field != nullptr) {
+          dfs(kit, color, pea->is_alias(val), vs_field, region, shim, paths);
+        }
+      }
+
+      if (val->is_Phi() && val->in(0) == region) {
+        const Type* type = kit->gvn().type(val);
+        PhiNode* phi = PhiNode::make(shim, nullptr, type, val->adr_type());
+
+        for (int j =0; j < paths.length(); ++j) {
+          int idx = paths.at(j);
+          phi->set_req(j + 1, val->in(idx));
+        }
+        kit->gvn().set_type(phi, type);
+        vs->set_field(field, kit->gvn().transform(phi));
+      }
+  }
+}
 // Passive Materialization
 // ------------------------
 // Materialize an object at the phi node because at least one of its predecessors has materialized the object.
@@ -894,7 +928,7 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
   if (!EnablePassiveMaterialization) return var;
 
   tty->print_cr("[passive_materialize]");
-  auto* pea = kit->PEA();
+  auto pea = kit->PEA();
   ObjID id = pea->is_alias(var);
   assert(newin.get_object_state(id)->is_virtual(), "must be virtual in newin");
   VirtualState* vs = static_cast<VirtualState*>(newin.get_object_state(id));
@@ -1025,7 +1059,9 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
       }
     }
   }
-
+  //void PEAState::dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
+  ObjColorTable color;
+  dfs(kit, color, id, as_virtual(pea, var), r, shim, paths);
   Node* mat = materialize(&shim_kit, var);
 
   // after materialization, we need to update the current map.
