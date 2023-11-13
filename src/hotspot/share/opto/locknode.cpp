@@ -264,6 +264,10 @@ void Parse::do_monitor_exit() {
             //                   | sfpt (map)         |
             //                   +--------------------+
             //
+            // This is actually a lift. We lift Phi/Unlock nodes before 'region' so we can eliminate the Phi node.
+            // It is complex because UnlockNode is a Call. We have to deal with compile-time side-effect.
+            // after effect: region is dead. new_rgn take over.
+            //
             RegionNode* region = obj->in(0)->as_Region();
             BoxLockNode* box = map()->peek_monitor_box()->as_BoxLock();
 
@@ -317,11 +321,11 @@ void Parse::do_monitor_exit() {
                 ctrl = kit.control();
                 mem = kit.merged_memory();
                 abio = kit.i_o();
+                new_rgn->init_req(i, ctrl);
               } else {
-                assert(false, "impossible! monitorExit must post-dominate the PhiNode.");
+                new_rgn->init_req(i, ctrl);
+                continue;
               }
-
-              new_rgn->init_req(i, ctrl);
 
               if (!merged) {
                 merged = true;
@@ -331,17 +335,20 @@ void Parse::do_monitor_exit() {
               } else {
                 merge_memory_edges(mem, i, false);
                 Node* phi = i_o();
-                if (!(phi->is_Phi() && phi->in(0) != new_rgn)) {
+                if (!phi->is_Phi() || phi->in(0) != new_rgn) {
                   phi = PhiNode::make(new_rgn, phi);
                   gvn().set_type(phi, Type::ABIO);
+                  set_i_o(phi);
                   record_for_igvn(phi);
                 }
                 phi->set_req(i, abio);
-                set_i_o(phi);
               }
             }
 
             new_rgn = _gvn.transform_no_reclaim(new_rgn);
+            // new_rgn takes over region from here.
+            C->gvn_replace_by(region, new_rgn);
+
             set_control(new_rgn);
             record_for_igvn(new_rgn);
 
