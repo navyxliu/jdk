@@ -427,19 +427,7 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
     C->set_has_monitors(true);
   }
 
-  _tf = TypeFunc::make(method());
   _iter.reset_to_method(method());
-  _flow = method()->get_flow_analysis();
-  if (_flow->failing()) {
-    assert(false, "type flow failed during parsing");
-    C->record_method_not_compilable(_flow->failure_reason());
-  }
-
-#ifndef PRODUCT
-  if (_flow->has_irreducible_entry()) {
-    C->set_parsed_irreducible_loop(true);
-  }
-#endif
   C->set_has_loops(C->has_loops() || method()->has_loops());
 
   if (_expected_uses <= 0) {
@@ -509,12 +497,20 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
   if (depth() == 1 && C->is_osr_compilation()) {
     _entry_bci = C->entry_bci();
     _flow = method()->get_osr_flow_analysis(osr_bci());
-    if (_flow->failing()) {
-      assert(false, "type flow analysis failed for OSR compilation");
-      C->record_method_not_compilable(_flow->failure_reason());
+    _tf = C->tf();     // the OSR entry type is different
+  } else {
+    _flow = method()->get_flow_analysis();
+    _tf = TypeFunc::make(method());
+  }
+
+  if (_flow->failing()) {
+    assert(false, "type flow failed during parsing");
+    C->record_method_not_compilable(_flow->failure_reason());
 #ifndef PRODUCT
       if (PrintOpto && (Verbose || WizardMode)) {
-        tty->print_cr("OSR @%d type flow bailout: %s", _entry_bci, _flow->failure_reason());
+        tty->print_cr("%s @%d type flow bailout: %s", _entry_bci == InvocationEntryBci ? "Normal" : "OSR",
+                                                      _entry_bci,
+                                                      _flow->failure_reason());
         if (Verbose) {
           method()->print();
           method()->print_codes();
@@ -522,10 +518,13 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
         }
       }
 #endif
-    }
-    _tf = C->tf();     // the OSR entry type is different
   }
 
+#ifndef PRODUCT
+  if (_flow->has_irreducible_entry()) {
+    C->set_parsed_irreducible_loop(true);
+  }
+#endif
 #ifdef ASSERT
   if (depth() == 1) {
     assert(C->is_osr_compilation() == this->is_osr_parse(), "OSR in sync");
