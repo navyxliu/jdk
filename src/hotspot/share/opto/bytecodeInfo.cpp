@@ -522,13 +522,21 @@ bool InlineTree::pass_initial_checks(ciMethod* caller_method, int caller_bci, ci
 }
 
 //------------------------------check_can_parse--------------------------------
-const char* InlineTree::check_can_parse(ciMethod* callee) {
+const char* InlineTree::check_can_parse(ciMethod* callee, int entry_bci) {
   // Certain methods cannot be parsed at all:
   if ( callee->is_native())                     return "native method";
   if ( callee->is_abstract())                   return "abstract method";
   if (!callee->has_balanced_monitors())         return "not compilable (unbalanced monitors)";
-  if ( callee->get_flow_analysis()->failing())  return "not compilable (flow analysis failed)";
   if (!callee->can_be_parsed())                 return "cannot be parsed";
+
+  if (entry_bci == InvocationEntryBci) {
+    if (callee->get_flow_analysis()->failing()) {
+      return "not compilable (flow analysis failed)";
+    }
+  } else if (callee->get_osr_flow_analysis(entry_bci)->failing()) {
+    return "not OSR compilable (flow analysis failed)";
+  }
+
   return nullptr;
 }
 

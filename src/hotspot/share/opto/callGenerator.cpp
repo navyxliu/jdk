@@ -65,22 +65,20 @@ bool CallGenerator::is_inlined_method_handle_intrinsic(ciMethod* symbolic_info, 
 // Internal class which handles all direct bytecode traversal.
 class ParseGenerator : public InlineCallGenerator {
 private:
-  bool  _is_osr;
+  const int _entry_bci;
   float _expected_uses;
 
 public:
-  ParseGenerator(ciMethod* method, float expected_uses, bool is_osr = false)
-    : InlineCallGenerator(method)
+  ParseGenerator(ciMethod* method, float expected_uses, int entry_bci = InvocationEntryBci)
+    : InlineCallGenerator(method), _entry_bci(entry_bci)
   {
-    _is_osr        = is_osr;
     _expected_uses = expected_uses;
-    assert(InlineTree::check_can_parse(method) == nullptr, "parse must be possible");
+    assert(InlineTree::check_can_parse(method, _entry_bci) == nullptr, "parse must be possible");
   }
 
   virtual bool      is_parse() const           { return true; }
   virtual JVMState* generate(JVMState* jvms);
-  int is_osr() { return _is_osr; }
-
+  int is_osr() const { return _entry_bci == InvocationEntryBci; }
 };
 
 JVMState* ParseGenerator::generate(JVMState* jvms) {
@@ -298,10 +296,10 @@ CallGenerator* CallGenerator::for_inline(ciMethod* m, float expected_uses) {
 // for the method execution already in progress, not just the JVMS
 // of the caller.  Thus, this CallGenerator cannot be mixed with others!
 CallGenerator* CallGenerator::for_osr(ciMethod* m, int osr_bci) {
-  if (InlineTree::check_can_parse(m) != nullptr)  return nullptr;
+  if (InlineTree::check_can_parse(m, osr_bci) != nullptr)  return nullptr;
   float past_uses = m->interpreter_invocation_count();
   float expected_uses = past_uses;
-  return new ParseGenerator(m, expected_uses, true);
+  return new ParseGenerator(m, expected_uses, osr_bci);
 }
 
 CallGenerator* CallGenerator::for_direct_call(ciMethod* m, bool separate_io_proj) {

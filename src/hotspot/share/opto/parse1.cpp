@@ -481,7 +481,6 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
     log->elem("observe that='has_exception_handlers'");
   }
 
-  assert(InlineTree::check_can_parse(method()) == nullptr, "Can not parse this method, cutout earlier");
   assert(method()->has_balanced_monitors(), "Can not parse unbalanced monitors, cutout earlier");
 
   // Always register dependence if JVMTI is enabled, because
@@ -498,9 +497,11 @@ Parse::Parse(JVMState* caller, ciMethod* parse_method, float expected_uses)
     _entry_bci = C->entry_bci();
     _flow = method()->get_osr_flow_analysis(osr_bci());
     _tf = C->tf();     // the OSR entry type is different
+    assert(InlineTree::check_can_parse(method(), _entry_bci) == nullptr, "Can not parse this method, cutout earlier");
   } else {
     _flow = method()->get_flow_analysis();
     _tf = TypeFunc::make(method());
+    assert(InlineTree::check_can_parse(method()) == nullptr, "Can not parse this method, cutout earlier");
   }
 
   if (_flow->failing()) {

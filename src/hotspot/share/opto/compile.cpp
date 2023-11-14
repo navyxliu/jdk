@@ -771,7 +771,7 @@ Compile::Compile( ciEnv* ci_env, ciMethod* target, int osr_bci,
     }
     if (failing())  return;
     if (cg == nullptr) {
-      const char* reason = InlineTree::check_can_parse(method());
+      const char* reason = InlineTree::check_can_parse(method(), entry_bci());
       assert(reason != nullptr, "expect reason for parse failure");
       stringStream ss;
       ss.print("cannot parse method: %s", reason);

@@ -96,7 +96,7 @@ protected:
   const char* msg()               const { return _msg; }
   void        set_msg(const char* msg)  { _msg = msg; }
 public:
-  static const char* check_can_parse(ciMethod* callee);
+  static const char* check_can_parse(ciMethod* callee, int entry_bci = InvocationEntryBci);
 
   static InlineTree* build_inline_tree_root();
   static InlineTree* find_subtree_from_root(InlineTree* root, JVMState* jvms, ciMethod* callee);
