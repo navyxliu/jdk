@@ -1063,9 +1063,12 @@ Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNod
     }
   }
 
-  ResourceMark rm;
-  Unique_Node_List color;
-  update_internal_phi_nodes(kit, color, id, as_virtual(pea, var), r, shim, paths);
+  {
+    ResourceMark rm;
+    Unique_Node_List color;
+    update_internal_phi_nodes(kit, color, id, as_virtual(pea, var), r, shim, paths);
+  }
+
   Node* mat = materialize(&shim_kit, var);
 
   // after materialization, we need to update the current map.
