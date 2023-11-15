@@ -354,10 +354,7 @@ class PEAState {
 #endif
 
 protected:
-  using ObjColorTable = ResourceHashtable<ObjID, bool, 23, /*table_size*/
-                                 AnyObj::RESOURCE_AREA, mtCompiler>;
-
-  void update_internal_phi_nodes(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
+  void update_internal_phi_nodes(GraphKit* kit, Unique_Node_List& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
 };
 
 class AllocationStateMerger {

@@ -883,9 +883,9 @@ static bool matched(SafePointNode* sfpt, ObjID id, VirtualState* vs) {
 }
 
 // update the internal phi node in virtual objects.
-void PEAState::update_internal_phi_nodes(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths) {
-  if (color.contains(key)) return;
-  color.put(key, true);
+void PEAState::update_internal_phi_nodes(GraphKit* kit, Unique_Node_List& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths) {
+  if (color.member(key)) return;
+  color.push(key);
 
   auto pea = kit->PEA();
   for (auto&& it = vs->field_iterator(); it.has_next(); ++it) {
@@ -1063,7 +1063,8 @@ Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNod
     }
   }
 
-  ObjColorTable color;
+  ResourceMark rm;
+  Unique_Node_List color;
   update_internal_phi_nodes(kit, color, id, as_virtual(pea, var), r, shim, paths);
   Node* mat = materialize(&shim_kit, var);
 
