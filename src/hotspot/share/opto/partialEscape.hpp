@@ -97,10 +97,12 @@ class VirtualState: public ObjectState {
 
   bool equals(const VirtualState* rhs) {
     if (this != rhs) {
-      if (_lockcnt != rhs->_lockcnt) return false;
-      if (_oop_type != rhs->_oop_type) return false;
-      int n = nfields();
-      if (n != rhs->nfields()) return false;
+      int n;
+      if ((_lockcnt != rhs->_lockcnt)
+       || (_oop_type != rhs->_oop_type)
+       || (n = nfields()) != rhs->nfields())
+        return false;
+
       for (int i = 0; i < n; ++i) {
         if (_entries[i] != rhs->_entries[i]) {
           return false;
@@ -294,10 +296,8 @@ class PEAState {
   void add_new_allocation(GraphKit* kit, Node* obj);
 
   Node* materialize(GraphKit* kit, Node* var);
-  // passive_materialize case-a
-  Node* passive_materialize(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum);
-  // passive materialize case-b
-  Node* passive_materialize_for_predecessors(GraphKit* kit, Node* var, RegionNode* r, uint pnum);
+  Node* materialize_incoming_virtual(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum);
+  Node* materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNode* r, uint pnum);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 
@@ -357,7 +357,7 @@ protected:
   using ObjColorTable = ResourceHashtable<ObjID, bool, 23, /*table_size*/
                                  AnyObj::RESOURCE_AREA, mtCompiler>;
 
-  void dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
+  void update_internal_phi_nodes(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
 };
 
 class AllocationStateMerger {

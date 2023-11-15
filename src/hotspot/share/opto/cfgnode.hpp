@@ -83,7 +83,6 @@ public:
 
 private:
   bool _is_unreachable_region;
-  bool _shim; // inserted by PEA
   LoopStatus _loop_status;
 
   bool is_possible_unsafe_loop(const PhaseGVN* phase) const;
@@ -96,7 +95,7 @@ public:
 
   RegionNode(uint required)
     : Node(required),
-      _is_unreachable_region(false), _shim(false),
+      _is_unreachable_region(false),
       _loop_status(LoopStatus::NeverIrreducibleEntry)
   {
     init_class_id(Class_Region);
@@ -110,11 +109,6 @@ public:
     return nullptr;  // not a copy!
   }
 
-  bool is_shim() const {
-    return _shim;
-  }
-
-  static RegionNode* make_shim(int required);
   PhiNode* has_phi() const;        // returns an arbitrary phi user, or null
   PhiNode* has_unique_phi() const; // returns the unique phi user, or null
   // Is this region node unreachable from root?

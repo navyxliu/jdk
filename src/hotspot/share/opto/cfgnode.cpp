@@ -580,6 +580,27 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
         }
       }
     } else {
+      // in passive materialization, we create a control node which covers multiple inputs of a region node.
+      //
+      // +-----------+   +--------+
+      // | CFG node  |   |cfg n   |
+      // +-----------+   +--------+
+      //      |  \  \     /
+      //      |   |  |   |
+      // +----------------+
+      // | Region         |
+      // +----------------+
+      //
+      // we need to normalize the region node, and its phi nodes.
+      // +-----------+  +-----+
+      // | CFG node  |  |cfg n|
+      // +-----------+  +-----+
+      //      |        /
+      //      |       |
+      // +-------------+
+      // | Region      | (inputs subtracts 2)
+      // +-------------+
+      //
       for (uint i = 1; i < req()-1; i++) {
         Node* c1 = in(i);
         if (c1 == nullptr || c1->is_top()) continue;
@@ -1078,12 +1099,6 @@ const RegMask &RegionNode::out_RegMask() const {
   return RegMask::Empty;
 }
 
-RegionNode* RegionNode::make_shim(int required) {
-  RegionNode* r = new RegionNode(required);
-  r->_shim = true;
-  return r;
-}
-
 #ifndef PRODUCT
 void RegionNode::dump_spec(outputStream* st) const {
   Node::dump_spec(st);
@@ -1096,9 +1111,6 @@ void RegionNode::dump_spec(outputStream* st) const {
     break;
   case RegionNode::LoopStatus::NeverIrreducibleEntry:
     break; // nothing
-  }
-  if (_shim) {
-    st->print("[shim]");
   }
 }
 #endif

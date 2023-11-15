@@ -882,7 +882,8 @@ static bool matched(SafePointNode* sfpt, ObjID id, VirtualState* vs) {
   return as.contains(id) && as.equals(id, vs);
 }
 
-void PEAState::dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths) {
+// update the internal phi node in virtual objects.
+void PEAState::update_internal_phi_nodes(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths) {
   if (color.contains(key)) return;
   color.put(key, true);
 
@@ -899,7 +900,7 @@ void PEAState::dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState*
       if (is_obj && pea->is_alias(val)) {
         VirtualState* vs_field = as_virtual(pea, val);
         if (vs_field != nullptr) {
-          dfs(kit, color, pea->is_alias(val), vs_field, region, shim, paths);
+          update_internal_phi_nodes(kit, color, pea->is_alias(val), vs_field, region, shim, paths);
         }
       }
 
@@ -924,10 +925,9 @@ void PEAState::dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState*
 // Arguments newin@ and newin_map@ from predecessor r->in(pnum) and we need to materialize var for it.
 // there are 2 possibilities. we found a shim region which has an identical virtual state of obj, then we merge it.
 // or we create a new shim region.
-Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum) {
+Node* PEAState::materialize_incoming_virtual(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum) {
   if (!EnablePassiveMaterialization) return var;
 
-  tty->print_cr("[passive_materialize]");
   auto pea = kit->PEA();
   ObjID id = pea->is_alias(var);
   assert(newin.get_object_state(id)->is_virtual(), "must be virtual in newin");
@@ -942,7 +942,7 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
 
   for (uint i = 1; i < r->req(); ++i) {
       Node* n = r->in(0);
-      if (n->is_Region() && n->as_Region()->is_shim()) {
+      if (n != nullptr && n->is_Region()) {
         SafePointNode* sfpt = attached_sfpt(n->as_Region());
         if (sfpt != nullptr && matched(sfpt, id, vs)) {
           shim = n->as_Region();
@@ -966,7 +966,7 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
   };
 
   if (shim == nullptr) {
-      shim = RegionNode::make_shim(2);
+      shim = new RegionNode(2);
       shim->set_req(1, r->in(pnum));
       kit->gvn().set_type(shim, Type::CONTROL);
       kit->record_for_igvn(shim);
@@ -989,15 +989,18 @@ Node* PEAState::passive_materialize(GraphKit* kit, Node* var, PEAState& newin, S
   return retval;
 }
 
-Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, RegionNode* r, uint pnum) {
+// materialize var for all predecessors of current region.
+// r->in(pnum) is newin and the object is escaped in newin.
+// We need to clone kit->map() and rewrite those phi nodes for the predecessors.
+// after materialization, the new code controls all covered paths.
+Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNode* r, uint pnum) {
   if (!EnablePassiveMaterialization) return var;
-  //tty->print_cr("[passive_materialize_for_predecessors] ");
 
   auto* pea = kit->PEA();
   ObjID id = pea->is_alias(var);
   PhaseGVN& gvn = kit->gvn();
 
-  RegionNode* shim = RegionNode::make_shim(1);
+  RegionNode* shim = new RegionNode(1);
   GrowableArray<uint> paths;
 
   for (uint i=1; i<r->req(); ++i) {
@@ -1059,9 +1062,9 @@ Node* PEAState::passive_materialize_for_predecessors(GraphKit* kit, Node* var, R
       }
     }
   }
-  //void PEAState::dfs(GraphKit* kit, ObjColorTable& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
+
   ObjColorTable color;
-  dfs(kit, color, id, as_virtual(pea, var), r, shim, paths);
+  update_internal_phi_nodes(kit, color, id, as_virtual(pea, var), r, shim, paths);
   Node* mat = materialize(&shim_kit, var);
 
   // after materialization, we need to update the current map.
@@ -1268,7 +1271,7 @@ void AllocationStateMerger::merge_at_phi_creation(GraphKit* kit, PEAState& newin
     if (obj1 == obj2 && os2 != nullptr) { // n points to the same object and pred_as is tracking the object.
       if (!os1->is_virtual() || !os2->is_virtual()) {
         if (os1->is_virtual()) {
-          if (m == _state.passive_materialize_for_predecessors(kit, m, _region, pnum)) {
+          if (m == _state.materialize_incoming_escaped(kit, m, _region, pnum)) {
             bool materialized = static_cast<EscapedState*>(os2)->has_materialized();
             _state.escape(obj1, phi, materialized);
           } else {
