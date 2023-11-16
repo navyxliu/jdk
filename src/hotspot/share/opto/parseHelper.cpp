@@ -435,18 +435,30 @@ ObjectState& VirtualState::merge(ObjectState* newin, GraphKit* kit, RegionNode* 
       if (m != vs->_entries[i]) {
         ciField* field = ik->nonstatic_field_at(i);
         BasicType bt = field->layout_type();
-        const Type* type = Type::get_const_basic_type(bt);
+        Node* n = vs->_entries[i];
 
         if (m == nullptr || !m->is_Phi() || m->in(0) != r) {
-          if (m == nullptr) {
-            m = kit->zerocon(bt);
+          const Type* type;
+
+          if (bt == T_OBJECT || bt == T_ARRAY || bt == T_NARROWOOP) {
+            if (m == nullptr) {
+              m = kit->zerocon(bt);
+              type = kit->gvn().type(n);
+            } else {
+              type = kit->gvn().type(m);
+            }
+          } else {
+            if (m == nullptr) {
+              m = kit->zerocon(bt);
+            }
+            type = Type::get_const_basic_type(bt);
           }
+
           m = PhiNode::make(r, m, type);
           kit->gvn().set_type(m, type);
           _entries[i] = m;
         }
 
-        Node* n = vs->_entries[i];
         if (n == nullptr) {
           n = kit->zerocon(bt);
         }
