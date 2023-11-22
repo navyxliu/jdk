@@ -1865,9 +1865,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     PEAState& as = block()->state();
     AllocationStateMerger as_merger(as, map(), r);
 
-    // passive materialization alter memory, and merge_memory_edge() will lock down phi nodes of memory.
-    // we work around this issue by merging in reversing order.
-    for (uint j = newin->req()-1; j >= 1; --j) {
+    for (uint j = 1; j < newin->req(); ++j) {
       Node* m = map()->in(j);   // Current state of target.
       Node* n = newin->in(j);   // Incoming change to target state.
       PhiNode* phi;
@@ -1929,9 +1927,8 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     }
 
     if (pnum == PhiNode::Input) {
-      // This logic ignores j = TypeFunc::Memory on purpose.
-      // phi nodes in MergedMemory are locked down in merge_memory_edges().
       for (uint j = 1; j < newin->req(); ++j) {
+        if (j == TypeFunc::Memory) continue;
         Node* n = map()->in(j);
 
         if (n->is_Phi() && n->in(0) == r) {
@@ -1949,6 +1946,24 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           assert(bt2->higher_equal_speculative(bt1), "must be consistent with type-flow");
           record_for_igvn(phi);
         }
+      }
+
+      MergeMemNode* m = merged_memory();
+      Node* base = nullptr;
+      for (MergeMemStream mms(m); mms.next_non_empty(); ) {
+        Node* mem = mms.memory();
+        if (mem->is_Phi() && mem->in(0) == r) {
+          if (mms.at_base_memory()) {
+            base = mem;
+          } else {
+            record_for_igvn(mem);
+            mms.set_memory(_gvn.transform_no_reclaim(mem));// store back through the iterator
+          }
+        }
+      }
+      if (base != nullptr) {
+        record_for_igvn(base);
+        m->set_base_memory(_gvn.transform_no_reclaim(base));
       }
 
       if (r->in(0) == nullptr) { // The occasional useless Region
@@ -2012,21 +2027,12 @@ void Parse::merge_memory_edges(MergeMemNode* n, int pnum, bool nophi) {
     // Insert q into local phi
     if (phi != nullptr) {
       assert(phi->region() == r, "");
-      p = phi;
       phi->set_req(pnum, q);
       if (mms.at_base_memory()) {
-        base = phi;  // delay transforming it
-      } else if (pnum == 1) {
-        record_for_igvn(phi);
-        p = _gvn.transform_no_reclaim(phi);
+        base = phi;
       }
-      mms.set_memory(p);// store back through the iterator
+      mms.set_memory(phi);// store back through the iterator
     }
-  }
-  // Transform base last, in case we must fiddle with remerging.
-  if (base != nullptr && pnum == 1) {
-    record_for_igvn(base);
-    m->set_base_memory( _gvn.transform_no_reclaim(base) );
   }
 }
 
