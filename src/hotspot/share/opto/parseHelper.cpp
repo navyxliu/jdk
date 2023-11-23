@@ -1031,12 +1031,9 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
     }
   }
 
-  if (same_obj) {
-    //xliu: should I also check pnum == 1?
-    // phi nodes for exception handler may have leave normal paths vacant.
-    pea->add_alias(unique, phi);
-  } else {
-    bool printed = false;
+  if (!same_obj) {
+    bool changed = false;
+    bool in_table = false;
 
     for (uint i = 1; i < phi->req(); ++i) {
       if (region->in(i) == nullptr || region->in(i)->is_top())
@@ -1058,12 +1055,14 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
 
         if (node != value) {
           assert(value != phi, "sanity");
+
+          if (!changed) {
+            NOT_PRODUCT(phi->dump());
+            changed = true;
+            in_table = kit->gvn().hash_delete(phi);
+          }
 #ifndef PRODUCT
           if (PEAVerbose) {
-            if (!printed) {
-              phi->dump();
-              printed = true;
-            }
             tty->print_cr("[PEA] replace %dth input with node %d", i, value->_idx);
           }
 #endif
@@ -1071,6 +1070,11 @@ void AllocationStateMerger::process_phi(PhiNode* phi, GraphKit* kit, RegionNode*
         }
       }
     }
+
+    if (changed && in_table) {
+      kit->gvn().hash_find_insert(phi);
+    }
+    // since phi merge more the one object, it's not an alias of obj.
     ObjID obj = pea->is_alias(phi);
     if (obj != nullptr) {
       pea->remove_alias(obj, phi);
