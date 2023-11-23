@@ -1012,10 +1012,10 @@ Node* PEAState::materialize_incoming_virtual(GraphKit* kit, Node* var, PEAState&
   return retval;
 }
 
-// materialize var for all predecessors of current region.
+// Materialize var for all predecessors of current region.
 // r->in(pnum) is newin and the object is escaped in newin.
 // We need to clone kit->map() and rewrite those phi nodes for the predecessors.
-// after materialization, the new code controls all covered paths.
+// After materialization, the new code controls all covered paths.
 Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNode* r, uint pnum) {
   if (!EnablePassiveMaterialization) return var;
 
@@ -1032,6 +1032,20 @@ Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNod
     if (n != nullptr) {
       paths.append(i);
       shim->add_req(n);
+    }
+  }
+
+  if (PEAVerbose) {
+    tty->print("materialize_incoming_escaped for obj = %d", id->_idx);
+    r->dump();
+    tty->print("paths: ");
+    for (int i =0; i < paths.length(); ++i) {
+        tty->print("%d", paths.at(i));
+        if (i+1 < paths.length()) {
+          tty->print(", ");
+        } else {
+          tty->cr();
+        }
     }
   }
   gvn.set_type(shim, Type::CONTROL);
@@ -1156,10 +1170,16 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
         // If obj is virtual in current state,  it must be escaped in newin.
         // Mark it escaped in current state.
         EscapedState* es2 = static_cast<EscapedState*>(os2);
-        materialized = es2->has_materialized();
         m = _state.get_java_oop(obj);
         n = es2->merged_value();
-        es = _state.escape(obj, m, materialized);
+        if (!es2->has_materialized() ||  m == _state.materialize_incoming_escaped(kit, m, _region, pnum)) {
+          materialized = es2->has_materialized();
+          es = _state.escape(obj, m, materialized);
+        } else {
+          materialized = true;
+          es = static_cast<EscapedState*>(_state.get_object_state(obj));
+          m = es->merged_value();
+        }
       } else if (os2->is_virtual()) {
         // If obj is virtual in newin, it must be escaped in current state.
         // Mark it escaped in newin
