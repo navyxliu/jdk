@@ -259,6 +259,38 @@ public:
   }
 };
 
+class PassiveMaterializationContext {
+  GraphKit* _orig_kit;
+  RegionNode* _region;
+  uint _pnum;
+  RegionNode* _shim;
+  SafePointNode* _map;
+  GrowableArray<uint> _paths;
+
+public:
+  PassiveMaterializationContext(GraphKit* kit, RegionNode* r, uint pnum): _orig_kit(kit), _region(r), _pnum(pnum), _shim(nullptr), _map(nullptr) {
+  }
+
+  ~PassiveMaterializationContext();
+
+  GraphKit graphKit();
+
+  RegionNode* shim() const {
+    return _shim;
+  }
+
+  const GrowableArray<uint>& paths() const {
+    return _paths;
+  }
+
+  RegionNode* region() const {
+    return _region;
+  }
+
+protected:
+  void begin();
+};
+
 //TODO: rename it to allocation state.
 class PEAState {
   friend class Parse;
@@ -298,7 +330,7 @@ class PEAState {
 
   Node* materialize(GraphKit* kit, Node* var);
   Node* materialize_incoming_virtual(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum);
-  Node* materialize_incoming_escaped(GraphKit* kit, Node* var, RegionNode* r, uint pnum);
+  Node* materialize_incoming_escaped(GraphKit* kit, Node* var, PassiveMaterializationContext& ctx);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 
