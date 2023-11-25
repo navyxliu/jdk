@@ -1172,7 +1172,7 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
 
   VectorSet intersection = intersect(set1.member_set(), set2.member_set());
   set1.remove_useless_nodes(intersection);
-
+  {
   // first pass. handle passive materialization.
   PassiveMaterializationContext ctx(kit, _region, pnum);
   for (uint i = 0; i < set1.size(); ++i) {
@@ -1200,6 +1200,7 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
         newin.escape(obj, n, false);
       }
     }
+  }
   }
 
   // second pass: merge escaped states.
@@ -1231,8 +1232,15 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
         kit->gvn().set_type(phi, type);
         es1->update(materialized, phi);
 
-        // when we replace m with phi, we need to rescan
-        // all virtual objects and update their fields.
+        // when we replace m with phi, rescan local symbol table(map)
+        for (uint j = TypeFunc::Parms; j < kit->map()->req(); ++j) {
+          Node* input = kit->map()->in(j);
+          if (input == m) {
+            kit->map()->set_req(j, phi);
+          }
+        }
+
+        // then rescan all virtual objects and update their fields.
         for (uint j = 0; j < set1.size(); ++j) {
           if (i == j) continue;
           ObjID obj2 = static_cast<ObjID>(set1.at(j));

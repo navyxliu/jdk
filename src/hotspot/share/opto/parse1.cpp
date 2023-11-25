@@ -1003,6 +1003,7 @@ void Parse::throw_to_exit(SafePointNode* ex_map) {
     _replaced_nodes_for_exceptions = true;
   }
   caller.map()->transfer_replaced_nodes_from(ex_map, _new_idx);
+  caller.jvms()->alloc_state() = ex_map->jvms()->alloc_state(); // copy allocate_state from ex_map/jvm
   // ...and the exception:
   Node*          ex_oop        = saved_ex_oop(ex_map);
   SafePointNode* caller_ex_map = caller.make_exception_state(ex_oop);
