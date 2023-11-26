@@ -1136,7 +1136,6 @@ Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, PassiveMa
   if (PEAVerbose) {
     tty->print("materialize_incoming_escaped for obj = %d", id->_idx);
 
-    ctx.region()->dump();
     tty->print("paths: ");
     for (int i =0; i < paths.length(); ++i) {
         tty->print("%d", paths.at(i));
