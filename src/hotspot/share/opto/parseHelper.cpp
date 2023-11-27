@@ -475,7 +475,15 @@ ObjectState& VirtualState::merge(ObjectState* newin, GraphKit* kit, RegionNode* 
 
         ensure_phi(m->as_Phi(), pnum);
         m->set_req(pnum, n);
-        if (pnum == 1) {
+      }
+    }
+
+    // Because we may have identical fields, value number phi nodes in the 2nd pass.
+    if (pnum == 1) {
+      for (int i = 0; i < nfields(); ++i)  {
+        Node* m = _entries[i];
+
+        if (m != nullptr && m->is_Phi() && m->in(0) == r) {
           _entries[i] = kit->gvn().transform(m);
         }
       }
@@ -1134,7 +1142,7 @@ Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, PassiveMa
 
   auto paths = ctx.paths();
   if (PEAVerbose) {
-    tty->print("materialize_incoming_escaped for obj = %d", id->_idx);
+    tty->print_cr("materialize_incoming_escaped for obj = %d", id->_idx);
 
     tty->print("paths: ");
     for (int i =0; i < paths.length(); ++i) {
