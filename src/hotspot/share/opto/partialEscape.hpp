@@ -401,7 +401,7 @@ class AllocationStateMerger {
  public:
   AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region);
   ~AllocationStateMerger(); // purge all objects which are not in live.
-  void merge(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum);
+  void merge(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum, bool update_map);
   void merge_at_phi_creation(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum, PhiNode* phi, Node* m, Node* n);
 };
 

@@ -1924,7 +1924,8 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
 
     if (DoPartialEscapeAnalysis) {
-      as_merger.merge(this, pred_as, newin, pnum);
+      // update_map is false because we have intercepted the phi creation event when we merge two maps.
+      as_merger.merge(this, pred_as, newin, pnum, false);
     }
 
     if (pnum == PhiNode::Input) {
@@ -2385,7 +2386,7 @@ void Parse::return_current(Node* value) {
         Node* phi = _exits.argument(0);
         mp.merge_at_phi_creation(&_exits, newin, map(), _first_return, phi->as_Phi(), phi->in(_first_return-1), value);
       }
-      mp.merge(&_exits, newin, map(), _first_return);
+      mp.merge(&_exits, newin, map(), _first_return, true);
     }
   }
 

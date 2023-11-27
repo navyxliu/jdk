@@ -1170,7 +1170,7 @@ Node* PEAState::materialize_incoming_escaped(GraphKit* kit, Node* var, PassiveMa
 AllocationStateMerger::AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region)
                                             : _state(target), _map(map), _region(region) {}
 
-void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum) {
+void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum, bool update_map) {
   PartialEscapeAnalysis* pea = kit->PEA();
   Unique_Node_List set1, set2;
 
@@ -1180,34 +1180,34 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
   VectorSet intersection = intersect(set1.member_set(), set2.member_set());
   set1.remove_useless_nodes(intersection);
   {
-  // first pass. handle passive materialization.
-  PassiveMaterializationContext ctx(kit, _region, pnum);
-  for (uint i = 0; i < set1.size(); ++i) {
-    ObjID obj = static_cast<ObjID>(set1.at(i));
-    ObjectState* os1 = _state.get_object_state(obj);
-    ObjectState* os2 = newin.get_object_state(obj);
+    // first pass. handle passive materialization.
+    PassiveMaterializationContext ctx(kit, _region, pnum);
+    for (uint i = 0; i < set1.size(); ++i) {
+      ObjID obj = static_cast<ObjID>(set1.at(i));
+      ObjectState* os1 = _state.get_object_state(obj);
+      ObjectState* os2 = newin.get_object_state(obj);
 
-    if (!os1->is_virtual() || !os2->is_virtual()) {
-      assert(os1 != nullptr && os2 != nullptr, "sanity check");
-      Node* m;
-      Node* n;
+      if (!os1->is_virtual() || !os2->is_virtual()) {
+        assert(os1 != nullptr && os2 != nullptr, "sanity check");
+        Node* m;
+        Node* n;
 
-      if (os1->is_virtual()) {
-        // If obj is virtual in current state,  it must be escaped in newin.
-        // Mark it escaped in current state.
-        EscapedState* es2 = static_cast<EscapedState*>(os2);
-        m = _state.get_java_oop(obj);
-        if (!es2->has_materialized() ||  m == _state.materialize_incoming_escaped(kit, m, ctx)) {
-          _state.escape(obj, m, es2->has_materialized());
+        if (os1->is_virtual()) {
+          // If obj is virtual in current state,  it must be escaped in newin.
+          // Mark it escaped in current state.
+          EscapedState* es2 = static_cast<EscapedState*>(os2);
+          m = _state.get_java_oop(obj);
+          if (!es2->has_materialized() ||  m == _state.materialize_incoming_escaped(kit, m, ctx)) {
+            _state.escape(obj, m, es2->has_materialized());
+          }
+        } else {
+          // If obj is virtual in newin, it must be escaped in current state.
+          // Mark it escaped in newin
+          n = newin.get_java_oop(obj);
+          newin.escape(obj, n, false);
         }
-      } else {
-        // If obj is virtual in newin, it must be escaped in current state.
-        // Mark it escaped in newin
-        n = newin.get_java_oop(obj);
-        newin.escape(obj, n, false);
       }
     }
-  }
   }
 
   // second pass: merge escaped states.
@@ -1239,11 +1239,17 @@ void AllocationStateMerger::merge(GraphKit* kit, PEAState& newin, SafePointNode*
         kit->gvn().set_type(phi, type);
         es1->update(materialized, phi);
 
+
         // when we replace m with phi, rescan local symbol table(map)
-        for (uint j = TypeFunc::Parms; j < kit->map()->req(); ++j) {
-          Node* input = kit->map()->in(j);
-          if (input == m) {
-            kit->map()->set_req(j, phi);
+        // caveat: we don't do this for Parse::merge_common because Parse::ensure_phi()
+        // conduct type check. it avoid from creating phi nodes if the type of map->in(j)
+        // is valid.
+        if (update_map) {
+          for (uint j = TypeFunc::Parms; j < kit->map()->req(); ++j) {
+            Node* input = kit->map()->in(j);
+            if (input == m) {
+              kit->map()->set_req(j, phi);
+            }
           }
         }
 

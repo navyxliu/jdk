@@ -984,7 +984,7 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   }
 
   if (DoPartialEscapeAnalysis) {
-    as_merger.merge(&kit, slow_as, slow_map, 2);
+    as_merger.merge(&kit, slow_as, slow_map, 2, true);
   }
   // Merge memory
   kit.merge_memory(slow_map->merged_memory(), region, 2);
