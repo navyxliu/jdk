@@ -579,7 +579,9 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
           }
         }
       }
-    } else {
+    }
+
+    {
       // in passive materialization, we create a control node which covers multiple inputs of a region node.
       //
       // +-----------+   +--------+
