@@ -913,7 +913,13 @@ static bool matched(SafePointNode* sfpt, ObjID id, VirtualState* vs) {
   return as.contains(id) && as.equals(id, vs);
 }
 
-// update the internal phi node in virtual objects.
+// Update the internal phi nodes in virtual objects.
+// the goal is to replace region-based phi with shim-based phi.
+//
+// Passive materialization happen in shim region. Logically, shim region must
+// appear before original region. if we used the original region, it would have
+// use-before-def, or bad graph detected.
+//
 void PEAState::update_internal_phi_nodes(GraphKit* kit, Unique_Node_List& visited, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths) {
   if (visited.member(key)) return;
   visited.push(key);
@@ -926,11 +932,19 @@ void PEAState::update_internal_phi_nodes(GraphKit* kit, Unique_Node_List& visite
 
       BasicType bt = field->layout_type();
       bool is_obj = is_reference_type(bt);
+      EscapedState* es = nullptr;
 
-      if (is_obj && pea->is_alias(val)) {
-        VirtualState* vs_field = as_virtual(pea, val);
-        if (vs_field != nullptr) {
-          update_internal_phi_nodes(kit, visited, pea->is_alias(val), vs_field, region, shim, paths);
+      if (is_obj) {
+        ObjID id = pea->is_alias(val);
+        if (id != nullptr && contains(id)) {
+          ObjectState* os = get_object_state(id);
+
+          if (os->is_virtual()) {
+            update_internal_phi_nodes(kit, visited, id, static_cast<VirtualState*>(os), region, shim, paths);
+          } else {
+            es = static_cast<EscapedState*>(os);
+            val = es->merged_value();
+          }
         }
       }
 
@@ -943,7 +957,12 @@ void PEAState::update_internal_phi_nodes(GraphKit* kit, Unique_Node_List& visite
           phi->set_req(j + 1, val->in(idx));
         }
         kit->gvn().set_type(phi, type);
-        vs->set_field(field, kit->gvn().transform(phi));
+        Node* nn = kit->gvn().transform(phi);
+        vs->set_field(field, nn);
+
+        if (es != nullptr) {
+          es->update(nn);
+        }
       }
   }
 }
