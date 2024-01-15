@@ -706,6 +706,11 @@ void Parse::do_all_blocks() {
 
       progress = true;
       if (block->is_loop_head() || block->is_handler() || (has_irreducible && !block->is_ready())) {
+        // mark live objects 'Escaped' in map before mounting phi nodes.
+        if (DoPartialEscapeAnalysis && block->is_loop_head()) {
+          PEAState& as = jvms()->alloc_state();
+          as.mark_all_live_objects_escaped(PEA(), map());
+        }
         // Not all preds have been parsed.  We must build phis everywhere.
         // (Note that dead locals do not get phis built, ever.)
         ensure_phis_everywhere();
@@ -734,11 +739,6 @@ void Parse::do_all_blocks() {
 
         // Leave behind an undisturbed copy of the map, for future merges.
         set_map(clone_map());
-
-        if (DoPartialEscapeAnalysis && block->is_loop_head()) {
-          PEAState& as = jvms()->alloc_state();
-          as.mark_all_live_objects_escaped(PEA(), block->start_map());
-        }
       }
 
       if (control()->is_Region() && !block->is_loop_head() && !has_irreducible && !block->is_handler()) {
@@ -748,7 +748,7 @@ void Parse::do_all_blocks() {
         // that any path which was supposed to reach here has already
         // been parsed or must be dead.
         Node* c = control();
-        Node* result = _gvn.transform_no_reclaim(control());
+        Node* result = _gvn.transform(control());
         if (c != result && TraceOptoParse) {
           tty->print_cr("Block #%d replace %d with %d", block->rpo(), c->_idx, result->_idx);
         }
@@ -930,7 +930,7 @@ void Compile::return_values(JVMState* jvms) {
   // bind it to root
   root()->add_req(ret);
   record_for_igvn(ret);
-  initial_gvn()->transform_no_reclaim(ret);
+  initial_gvn()->transform(ret);
 }
 
 //------------------------rethrow_exceptions-----------------------------------
@@ -949,7 +949,7 @@ void Compile::rethrow_exceptions(JVMState* jvms) {
   // bind to root
   root()->add_req(exit);
   record_for_igvn(exit);
-  initial_gvn()->transform_no_reclaim(exit);
+  initial_gvn()->transform(exit);
 }
 
 //---------------------------do_exceptions-------------------------------------
@@ -1629,6 +1629,22 @@ void Parse::do_one_block() {
   // Set iterator to start of block.
   iter().reset_to_bci(block()->start());
 
+  if (ProfileExceptionHandlers && block()->is_handler()) {
+    ciMethodData* methodData = method()->method_data();
+    if (methodData->is_mature()) {
+      ciBitData data = methodData->exception_handler_bci_to_data(block()->start());
+      if (!data.exception_handler_entered() || StressPrunedExceptionHandlers) {
+        // dead catch block
+        // Emit an uncommon trap instead of processing the block.
+        set_parse_bci(block()->start());
+        uncommon_trap(Deoptimization::Reason_unreached,
+                      Deoptimization::Action_reinterpret,
+                      nullptr, "dead catch block");
+        return;
+      }
+    }
+  }
+
   CompileLog* log = C->log();
 
   // Parse bytecodes
@@ -1851,7 +1867,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
 
     if (pnum == 1) {            // Last merge for this Region?
       if (!block()->flow()->is_irreducible_loop_secondary_entry()) {
-        Node* result = _gvn.transform_no_reclaim(r);
+        Node* result = _gvn.transform(r);
         if (r != result && TraceOptoParse) {
           tty->print_cr("Block #%d replace %d with %d", block()->rpo(), r->_idx, result->_idx);
         }
@@ -1943,7 +1959,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           // Phis of pointers cannot lose the basic pointer type.
           debug_only(const Type* bt1 = phi->bottom_type());
           assert(bt1 != Type::BOTTOM, "should not be building conflict phis");
-          map()->set_req(j, _gvn.transform_no_reclaim(phi));
+          map()->set_req(j, _gvn.transform(phi));
           debug_only(const Type* bt2 = phi->bottom_type());
           assert(bt2->higher_equal_speculative(bt1), "must be consistent with type-flow");
           record_for_igvn(phi);
@@ -1959,13 +1975,13 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
             base = mem;
           } else {
             record_for_igvn(mem);
-            mms.set_memory(_gvn.transform_no_reclaim(mem));// store back through the iterator
+            mms.set_memory(_gvn.transform(mem));// store back through the iterator
           }
         }
       }
       if (base != nullptr) {
         record_for_igvn(base);
-        m->set_base_memory(_gvn.transform_no_reclaim(base));
+        m->set_base_memory(_gvn.transform(base));
       }
 
       if (r->in(0) == nullptr) { // The occasional useless Region
