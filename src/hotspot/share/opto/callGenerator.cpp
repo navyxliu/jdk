@@ -948,9 +948,6 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   // branch.
   kit.map()->set_replaced_nodes(replaced_nodes);
 
-  PEAState& slow_as = slow_jvms->alloc_state();
-  PEAState& as = new_jvms->alloc_state();
-  AllocationStateMerger as_merger(as);
   // Finish the diamond.
   kit.C->set_has_split_ifs(true); // Has chance for split-if optimization
   RegionNode* region = new RegionNode(3);
@@ -960,17 +957,13 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
   Node* iophi = PhiNode::make(region, kit.i_o(), Type::ABIO);
   iophi->set_req(2, slow_map->i_o());
   kit.set_i_o(gvn.transform(iophi));
-  // Merge memory
-  kit.merge_memory(slow_map->merged_memory(), region, 2);
-  // Transform new memory Phis.
-  for (MergeMemStream mms(kit.merged_memory()); mms.next_non_empty();) {
-    Node* phi = mms.memory();
-    if (phi->is_Phi() && phi->in(0) == region) {
-      mms.set_memory(gvn.transform(phi));
-    }
-  }
+
   uint tos = kit.jvms()->stkoff() + kit.sp();
   uint limit = slow_map->req();
+  PEAState& slow_as = slow_jvms->alloc_state();
+  PEAState& as = new_jvms->alloc_state();
+  AllocationStateMerger as_merger(as, kit.map(), region);
+
   for (uint i = TypeFunc::Parms; i < limit; i++) {
     // Skip unused stack slots; fast forward to monoff();
     if (i == tos) {
@@ -985,13 +978,22 @@ JVMState* PredictedCallGenerator::generate(JVMState* jvms) {
       phi->set_req(2, n);
       kit.map()->set_req(i, gvn.transform(phi));
       if (DoPartialEscapeAnalysis) {
-        as_merger.merge_at_phi_creation(kit.PEA(), slow_as, phi->as_Phi(), m, n);
+        as_merger.merge_at_phi_creation(&kit, slow_as, slow_map, 2, phi->as_Phi(), m, n);
       }
     }
   }
 
   if (DoPartialEscapeAnalysis) {
-    as_merger.merge(slow_as, &kit, region, 2);
+    as_merger.merge(&kit, slow_as, slow_map, 2, true);
+  }
+  // Merge memory
+  kit.merge_memory(slow_map->merged_memory(), region, 2);
+  // Transform new memory Phis.
+  for (MergeMemStream mms(kit.merged_memory()); mms.next_non_empty();) {
+    Node* phi = mms.memory();
+    if (phi->is_Phi() && phi->in(0) == region) {
+      mms.set_memory(gvn.transform(phi));
+    }
   }
   return kit.transfer_exceptions_into_jvms();
 }

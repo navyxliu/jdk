@@ -518,6 +518,35 @@ bool RegionNode::is_diamond() const {
   }
   return true;
 }
+
+class NodeChanger : public StackObj {
+  PhaseIterGVN* _igvn;
+  Node*         _node;
+  bool          _changed = false;
+
+public:
+  NodeChanger(PhaseIterGVN* igvn, Node* node) : _igvn(igvn), _node(node) {
+    assert(_igvn != nullptr, "only used this when can_reshape is true");
+  }
+
+  void del_req(uint idx) {
+    if (!_changed) {
+      _igvn->rehash_node_delayed(_node);
+      _changed = true;
+    }
+    _node->set_req_X(idx, nullptr, _igvn);
+    _node->del_req(idx);
+  }
+
+  void set_req(uint idx, Node* n) {
+    if (!_changed) {
+      _igvn->rehash_node_delayed(_node);
+      _changed = true;
+    }
+    _node->set_req_X(idx, n, _igvn);
+  }
+};
+
 //------------------------------Ideal------------------------------------------
 // Return a node which is more "ideal" than the current node.  Must preserve
 // the CFG, but we can still strip out dead paths.
@@ -548,6 +577,63 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
             set_req(j, nullptr);
             return this;      // Record progress
           }
+        }
+      }
+    }
+
+    {
+      // in passive materialization, we create a control node which covers multiple inputs of a region node.
+      //
+      // +-----------+   +--------+
+      // | CFG node  |   |cfg n   |
+      // +-----------+   +--------+
+      //      |  \  \     /
+      //      |   |  |   |
+      // +----------------+
+      // | Region         |
+      // +----------------+
+      //
+      // we need to normalize the region node, and its phi nodes.
+      // +-----------+  +-----+
+      // | CFG node  |  |cfg n|
+      // +-----------+  +-----+
+      //      |        /
+      //      |       |
+      // +-------------+
+      // | Region      | (inputs subtracts 2)
+      // +-------------+
+      //
+      for (uint i = 1; i < req()-1; i++) {
+        Node* c1 = in(i);
+        if (c1 == nullptr || c1->is_top()) continue;
+
+        GrowableArray<uint> paths;
+        for (uint j=i+1; j<req(); ++j) {
+          if (in(j) == c1) {
+            paths.push(j);
+          }
+        }
+
+        if (paths.length() > 0) {
+          PhaseIterGVN* igvn = phase->is_IterGVN();
+
+          for (DUIterator_Fast kmax, k = fast_outs(kmax); k < kmax; k++) {
+            Node* phi = fast_out(k);
+
+            if (phi != nullptr && phi->is_Phi() && phi->req() == req()) {
+              NodeChanger nc(igvn, phi);
+              for (int j = paths.length()-1; j>=0; --j) {
+                nc.del_req(paths.at(j));
+              }
+              igvn->add_users_to_worklist(phi);
+            }
+          }
+
+          NodeChanger nc(igvn, this);
+          for (int j = paths.length()-1; j>=0; --j) {
+            nc.del_req(paths.at(j));
+          }
+          return this;
         }
       }
     }
@@ -3044,4 +3130,3 @@ void BlackholeNode::format(PhaseRegAlloc* ra, outputStream* st) const {
   st->cr();
 }
 #endif
-

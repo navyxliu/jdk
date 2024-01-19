@@ -81,7 +81,9 @@ class VirtualState: public ObjectState {
   int nfields() const;
   void set_field(ciField* field, Node* val);
   Node* get_field(ciField* field) const;
-
+  const TypeOopPtr* type() const {
+    return _oop_type;
+  }
   ObjectState& merge(ObjectState* newin, GraphKit* kit, RegionNode* region, int pnum) override;
 
   void lock_inc() { _lockcnt++; }
@@ -91,6 +93,23 @@ class VirtualState: public ObjectState {
   }
   int lockcnt() const {
     return _lockcnt;
+  }
+
+  bool equals(const VirtualState* rhs) {
+    if (this != rhs) {
+      int n;
+      if ((_lockcnt != rhs->_lockcnt)
+       || (_oop_type != rhs->_oop_type)
+       || (n = nfields()) != rhs->nfields())
+        return false;
+
+      for (int i = 0; i < n; ++i) {
+        if (_entries[i] != rhs->_entries[i]) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
 #ifndef PRODUCT
@@ -197,6 +216,7 @@ class PartialEscapeAnalysis : public AnyObj {
   // alias maps from node to ObjID.
   PEAMap<Node*, ObjID>  _aliases;
   GrowableArray<ObjID>  _objects;
+  GrowableArray<RegionNode*> _shims;
 
 public:
   PartialEscapeAnalysis(Arena* arena): _aliases(), _objects(arena, 2, 0, nullptr) {}
@@ -239,10 +259,45 @@ public:
   }
 };
 
+class PassiveMaterializationContext {
+  GraphKit* _orig_kit;
+  RegionNode* _region;
+  uint _pnum;
+  RegionNode* _shim;
+  SafePointNode* _map;
+  GrowableArray<uint> _paths;
+
+public:
+  PassiveMaterializationContext(GraphKit* kit, RegionNode* r, uint pnum): _orig_kit(kit), _region(r), _pnum(pnum), _shim(nullptr), _map(nullptr) {
+  }
+
+  ~PassiveMaterializationContext();
+
+  GraphKit graphKit();
+
+  RegionNode* shim() const {
+    return _shim;
+  }
+
+  const GrowableArray<uint>& paths() const {
+    return _paths;
+  }
+
+  RegionNode* region() const {
+    return _region;
+  }
+
+protected:
+  void begin();
+};
+
 //TODO: rename it to allocation state.
 class PEAState {
   friend class Parse;
   PEAMap<ObjID, ObjectState*> _state;
+
+ protected:
+  Node* clone_object(GraphKit* kit, ObjID alloc);
 
  public:
   PEAState& operator=(const PEAState& init);
@@ -274,6 +329,8 @@ class PEAState {
   void add_new_allocation(GraphKit* kit, Node* obj);
 
   Node* materialize(GraphKit* kit, Node* var);
+  Node* materialize_incoming_virtual(GraphKit* kit, Node* var, PEAState& newin, SafePointNode* newin_map, PhiNode* phi, RegionNode* r, uint pnum);
+  Node* materialize_incoming_escaped(GraphKit* kit, Node* var, PassiveMaterializationContext& ctx);
 
   void put_field(GraphKit* kit, ciField* field, Node* objx, Node* val);
 
@@ -306,6 +363,17 @@ class PEAState {
     return nullptr;
   }
 
+  bool equals(ObjID id, const VirtualState* rhs) const {
+    if (contains(id)) {
+      ObjectState* os = get_object_state(id);
+      if (os->is_virtual()) {
+        VirtualState* vs = static_cast<VirtualState*>(os);
+        return vs->equals(rhs);
+      }
+    }
+    return false;
+  }
+
   void clear() {
     _state.unlink_all();
   }
@@ -318,22 +386,23 @@ class PEAState {
   void print_on(outputStream* os) const;
 #endif
 
-#ifdef ASSERT
-  void validate() const;
-#endif
+protected:
+  void update_internal_phi_nodes(GraphKit* kit, Unique_Node_List& color, ObjID key, VirtualState* vs, RegionNode* region, RegionNode* shim, const GrowableArray<uint>& paths);
 };
 
 class AllocationStateMerger {
  private:
   GrowableArray<ObjID> _live; // live objects
   PEAState& _state;
-  void process_phi(PhiNode* phi, GraphKit* kit, RegionNode* region, int pnum);
+  SafePointNode* _map;
+  RegionNode* _region;
+  void process_phi(PhiNode* phi, GraphKit* kit, int pnum);
 
  public:
-  AllocationStateMerger(PEAState& target);
+  AllocationStateMerger(PEAState& target, SafePointNode* map, RegionNode* region);
   ~AllocationStateMerger(); // purge all objects which are not in live.
-  void merge(PEAState& newin, GraphKit* kit, RegionNode* region, int pnum);
-  void merge_at_phi_creation(const PartialEscapeAnalysis* pea, PEAState& newin, PhiNode* phi, Node* m, Node* n);
+  void merge(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum, bool update_map);
+  void merge_at_phi_creation(GraphKit* kit, PEAState& newin, SafePointNode* newin_map, int pnum, PhiNode* phi, Node* m, Node* n);
 };
 
 void printPeaStatistics();

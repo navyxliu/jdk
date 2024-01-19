@@ -1,9 +1,4 @@
 class MergeIfElseParanoid {
-    static class Node {
-       public Node _next;
-       public Node() {}
-    }
-
     static Object _global;
     static Object _global2;
 

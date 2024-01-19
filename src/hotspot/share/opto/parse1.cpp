@@ -1003,6 +1003,7 @@ void Parse::throw_to_exit(SafePointNode* ex_map) {
     _replaced_nodes_for_exceptions = true;
   }
   caller.map()->transfer_replaced_nodes_from(ex_map, _new_idx);
+  caller.jvms()->alloc_state() = ex_map->jvms()->alloc_state(); // copy allocate_state from ex_map/jvm
   // ...and the exception:
   Node*          ex_oop        = saved_ex_oop(ex_map);
   SafePointNode* caller_ex_map = caller.make_exception_state(ex_oop);
@@ -1835,9 +1836,6 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     // Convert the existing Parser mapping into a mapping at this bci.
     store_state_to(target, pnum);
     assert(target->is_merged(), "do not come here twice");
-#ifdef ASSERT
-    target->state().validate();
-#endif
   } else {                      // Prior mapping at this bci
 
 #ifdef ASSERT
@@ -1882,7 +1880,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
     bool check_elide_phi = target->is_SEL_backedge(save_block);
     PEAState& pred_as = newin->jvms()->alloc_state();
     PEAState& as = block()->state();
-    AllocationStateMerger as_merger(as);
+    AllocationStateMerger as_merger(as, map(), r);
 
     for (uint j = 1; j < newin->req(); ++j) {
       Node* m = map()->in(j);   // Current state of target.
@@ -1920,8 +1918,7 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
               // Becase C2 Parse is merging basic blocks, we have to intercept some phi creation or
               // PEA MergeProcessor creates duplicated phi nodes.
               if (DoPartialEscapeAnalysis && phi != nullptr) {
-                PartialEscapeAnalysis* pea = PEA();
-                as_merger.merge_at_phi_creation(pea, pred_as, phi, m, n);
+                as_merger.merge_at_phi_creation(this, pred_as, newin, pnum, phi, m, n);
               } // DoPartialEscapeAnalysis
             }
           }
@@ -1938,7 +1935,23 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
         assert(phi->region() == r, "");
 
         phi->set_req(pnum, n);  // Then add 'n' to the merge
-        if (pnum == PhiNode::Input) {
+      }
+    } // End of for all values to be merged
+
+
+    if (DoPartialEscapeAnalysis) {
+      // update_map is false because we have intercepted the phi creation event when we merge two maps.
+      as_merger.merge(this, pred_as, newin, pnum, false);
+    }
+
+    if (pnum == PhiNode::Input) {
+      for (uint j = 1; j < newin->req(); ++j) {
+        if (j == TypeFunc::Memory) continue;
+        Node* n = map()->in(j);
+
+        if (n->is_Phi() && n->in(0) == r) {
+          PhiNode* phi = n->as_Phi();
+
           // Last merge for this Phi.
           // So far, Phis have had a reasonable type from ciTypeFlow.
           // Now _gvn will join that with the meet of current inputs.
@@ -1952,24 +1965,33 @@ void Parse::merge_common(Parse::Block* target, int pnum) {
           record_for_igvn(phi);
         }
       }
-    } // End of for all values to be merged
 
+      MergeMemNode* m = merged_memory();
+      Node* base = nullptr;
+      for (MergeMemStream mms(m); mms.next_non_empty(); ) {
+        Node* mem = mms.memory();
+        if (mem->is_Phi() && mem->in(0) == r) {
+          if (mms.at_base_memory()) {
+            base = mem;
+          } else {
+            record_for_igvn(mem);
+            mms.set_memory(_gvn.transform(mem));// store back through the iterator
+          }
+        }
+      }
+      if (base != nullptr) {
+        record_for_igvn(base);
+        m->set_base_memory(_gvn.transform(base));
+      }
 
-    if (DoPartialEscapeAnalysis) {
-      as_merger.merge(pred_as, this, r, pnum);
-    }
-
-    if (pnum == PhiNode::Input &&
-        !r->in(0)) {         // The occasional useless Region
-      assert(control() == r, "");
-      set_control(r->nonnull_req());
+      if (r->in(0) == nullptr) { // The occasional useless Region
+        assert(control() == r, "");
+        set_control(r->nonnull_req());
+      }
     }
 
     map()->merge_replaced_nodes_with(newin);
 
-#ifdef ASSERT
-    block()->state().validate();
-#endif
     // newin has been subsumed into the lazy merge, and is now dead.
     set_block(save_block);
 
@@ -2023,21 +2045,12 @@ void Parse::merge_memory_edges(MergeMemNode* n, int pnum, bool nophi) {
     // Insert q into local phi
     if (phi != nullptr) {
       assert(phi->region() == r, "");
-      p = phi;
       phi->set_req(pnum, q);
       if (mms.at_base_memory()) {
-        base = phi;  // delay transforming it
-      } else if (pnum == 1) {
-        record_for_igvn(phi);
-        p = _gvn.transform(phi);
+        base = phi;
       }
-      mms.set_memory(p);// store back through the iterator
+      mms.set_memory(phi);// store back through the iterator
     }
-  }
-  // Transform base last, in case we must fiddle with remerging.
-  if (base != nullptr && pnum == 1) {
-    record_for_igvn(base);
-    m->set_base_memory(_gvn.transform(base));
   }
 }
 
@@ -2381,15 +2394,15 @@ void Parse::return_current(Node* value) {
     if (DoPartialEscapeAnalysis) {
       PEAState& as =_exits.jvms()->alloc_state();
       PEAState& newin = jvms()->alloc_state();
-      AllocationStateMerger mp(as);
+      AllocationStateMerger mp(as, _exits.map(), _exits.control()->as_Region());
       // if value is a tracking object and PEA needs to create a phi node to merge it,
       // we need to use _exits.argument(0)
       ObjID obj = PEA()->is_alias(value);
       if (as.contains(obj) && newin.contains(obj)) {
         Node* phi = _exits.argument(0);
-        mp.merge_at_phi_creation(PEA(), newin, phi->as_Phi(), phi->in(_first_return-1), value);
+        mp.merge_at_phi_creation(&_exits, newin, map(), _first_return, phi->as_Phi(), phi->in(_first_return-1), value);
       }
-      mp.merge(newin, &_exits, _exits.control()->as_Region(), _first_return);
+      mp.merge(&_exits, newin, map(), _first_return, true);
     }
   }
 
